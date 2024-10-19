@@ -1,6 +1,11 @@
 # Bài tập lớn mạng máy tính
 ## Nhóm 4 thành viên
 
+-   Minh: client-branch
+-   Nam: tracker-server-branch
+-   Khiêm: peer-communication-branch
+-   Lâm: metainfo-file-management-branch
+
 ### Cấu trúc BTL:
 ```bash
 P2P-Torrent-Demo/
@@ -50,7 +55,7 @@ __client/ - Nhánh client-branch__
 
     ```python
     def announce(info_hash, peer_id, port, event='started'):
-    """Gửi yêu cầu announce tới tracker và cập nhật trạng thái của client."""
+        """Gửi yêu cầu announce tới tracker và cập nhật trạng thái của client."""
 
     ```
 
@@ -58,13 +63,15 @@ __client/ - Nhánh client-branch__
     def scrape(info_hash):
         """Gửi yêu cầu scrape tới tracker để lấy danh sách các peers có tệp với info_hash."""
     ```
--   client_cli.py: Cung cấp giao diện dòng lệnh (CLI) cho người dùng để chạy các lệnh announce, scrape.
 
+    **Bổ sung thêm các hàm: parse_magnet_link(magnet_link), magnet_handshake(s, digest), magnet_info(s, ext_id, metadata_size), magnet_download_piece(s, data, index), magnet_download(digest, data, peers_list, output_file)**  _xử lý magnet hết trong phần này_
+
+-   client_cli.py: Cung cấp giao diện dòng lệnh (CLI) cho người dùng để chạy các lệnh announce, scrape, và các lệnh liên quan đến magnet link.
 
     _Hàm cần hiện thực:_
     ```python
     def main():
-        """Giao diện dòng lệnh để thực hiện các lệnh như announce, scrape."""
+        """Giao diện dòng lệnh để thực hiện các lệnh như announce, scrape, và các lệnh liên quan đến magnet link."""
 
     ```
 
@@ -81,6 +88,21 @@ __client/ - Nhánh client-branch__
             mock_get.return_value.status_code = 200
             mock_get.return_value.json = lambda: {"interval": 1800, "peers": []}
             
+            client = ClientNode(tracker_url="http://localhost:6881/announce")
+            peers = client.announce(info_hash=b'some_info_hash', peer_id=b'peer1', port=6882)
+            self.assertEqual(peers, [])
+
+        @patch('requests.get')
+        def test_magnet_parse(self, mock_get):
+            magnet_link = "magnet:?xt=urn:btih:abcdef1234567890&tr=http://tracker.example.com/announce"
+            tracker, info_hash = client.parse_magnet_link(magnet_link)
+            self.assertEqual(tracker, "http://tracker.example.com/announce")
+            self.assertEqual(info_hash, "abcdef1234567890")
+
+    if __name__ == '__main__':
+        unittest.main()
+
+    ```
             client = ClientNode(tracker_url="http://localhost:6881/announce")
             peers = client.announce(info_hash=b'some_info_hash', peer_id=b'peer1', port=6882)
             self.assertEqual(peers, [])
