@@ -47,7 +47,7 @@ P2P-Torrent-Demo/
 ```
 
 ### Chi tiết các Thư mục và Files
-__client/ - Nhánh client-branch__
+__client/ - Nhánh client-branch -Minh__ 
 
 -   client_node.py: Chứa logic chính của client như gửi yêu cầu announce, scrape, và quản lý giao tiếp với tracker.
 
@@ -112,7 +112,7 @@ __client/ - Nhánh client-branch__
 
     ```
 
-__tracker/ - Nhánh tracker-server-branch__
+__tracker/ - Nhánh tracker-server-branch -Nam__
 
 -   tracker_server.py: Xử lý logic của Tracker Server. Quản lý thông tin về các peers và các tệp họ chia sẻ. Lắng nghe các yêu cầu announce, scrape. 
 
@@ -183,7 +183,7 @@ __tracker/ - Nhánh tracker-server-branch__
 
     ```
 
-__peer/ - Nhánh peer-communication-branch__
+__peer/ - Nhánh peer-communication-branch - Khiêm__
 
 -   peer_communication.py: Quản lý giao tiếp giữa các peers, xử lý handshake, interested, và trao đổi mảnh tệp.
 
@@ -257,7 +257,7 @@ __peer/ - Nhánh peer-communication-branch__
 
     ```
 
-__metainfo/ - Nhánh metainfo-file-management-branch__
+__metainfo/ - Nhánh metainfo-file-management-branch - Lâm__
 
 -   metainfo_storage.py: Phân tích file .torrent, trích xuất các thông tin như info_hash, piece_length, và các hash của mảnh tệp.
 
