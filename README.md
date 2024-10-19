@@ -1,9 +1,9 @@
 # Bài tập lớn mạng máy tính
 ## Nhóm 4 thành viên
 
--   Minh: client-branch
+-   Khiêm: client-branch
 -   Nam: tracker-server-branch
--   Khiêm: peer-communication-branch
+-   Minh: peer-communication-branch
 -   Lâm: metainfo-file-management-branch
 
 ### Cấu trúc BTL:
