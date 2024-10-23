@@ -39,3 +39,5 @@ class MetainfoStorage:
             total_size = sum(file[b'length'] for file in info[b'files'])
         
         return total_size
+
+print("done test file metainfo_storage.py")

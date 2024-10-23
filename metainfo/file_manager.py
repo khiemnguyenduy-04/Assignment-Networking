@@ -24,3 +24,5 @@ class FileManager:
         piece_data = self.read_piece(piece_index)
         piece_hash = hashlib.sha1(piece_data).hexdigest()
         return piece_hash == expected_hash
+
+print("done test file file_mana.py")
