@@ -4,8 +4,18 @@ import random
 import string
 import struct
 import os
+import sys
+
+sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
+
 import hashlib
+import logging
 from tabulate import tabulate
+from p2p.download_manager import Piece, start_download
+from p2p.peer import Peer
+
+# Configure logging
+logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 
 def _generate_peer_id(length=20):
     """Generate a random peer ID."""
@@ -61,10 +71,10 @@ class ClientNode:
             response_data = bencodepy.decode(response.content)
             self.has_announced = True  # Confirm that the client has announced to the tracker
             if b'failure reason' in response_data:
-                print(f"Tracker error: {response_data[b'failure reason'].decode()}")
+                logging.error(f"Tracker error: {response_data[b'failure reason'].decode()}")
                 return []
             if b'warning message' in response_data:
-                print(f"Tracker warning: {response_data[b'warning message'].decode()}")
+                logging.warning(f"Tracker warning: {response_data[b'warning message'].decode()}")
             if b'tracker id' in response_data:
                 self.tracker_id = response_data[b'tracker id'].decode()
             peers = response_data.get(b'peers', [])
@@ -73,64 +83,91 @@ class ClientNode:
                 peers = self._parse_compact_peers(peers)
             return peers
         except requests.RequestException as e:
-            print(f"Error during announce request: {e}")
+            logging.error(f"Error during announce request: {e}")
             return []
 
     def download_torrent(self, torrent_file, port, download_dir=None):
         """Handle the download process of a torrent."""
         torrent_data, info = self._load_torrent_file(torrent_file)
         info_hash = hashlib.sha1(bencodepy.encode(info)).digest()
-        print(f"Starting download from {self.tracker_url} on port {port}...")
+        logging.info(f"Starting download from {self.tracker_url} on port {port}...")
 
         peers = self.announce(info_hash, port)
-        print(f"Found peers: {peers}")
+        logging.info(f"Found peers: {peers}")
+        peers = [Peer(peer['ip'], peer['port']) for peer in peers]
 
-        # Simulate download process
-        print(f"Downloading files to {download_dir if download_dir else os.getcwd()}...")
-        # Implement actual download logic here
+        # Create the download directory if it doesn't exist
+        if download_dir and not os.path.exists(download_dir):
+            os.makedirs(download_dir)
 
+        # Get the piece length and the total length of the file
+        piece_length = info['piece length']
+        total_length = sum(file['length'] for file in info['files']) if 'files' in info else info['length']
+        pieces = []
+
+        # Create Piece objects for each piece in the torrent
+        for i in range(0, total_length, piece_length):
+            length = min(piece_length, total_length - i)
+            piece_hash = info['pieces'][i // piece_length * 20:(i // piece_length + 1) * 20]
+            pieces.append(Piece(i // piece_length, length, piece_hash))
+
+        # Ensure info['name'] is a string
+        file_name = info['name']
+        if isinstance(file_name, bytes):
+            file_name = file_name.decode('utf-8')
+
+        # Determine the file path to save the downloaded file
+        file_path = os.path.join(download_dir if download_dir else os.getcwd(), file_name)
+
+        peer_id_encoded = self.peer_id.encode("utf-8")
+        # Start the download process
+        start_download(peers, pieces, info_hash, peer_id_encoded, file_path)
+
+        logging.info(f"Download completed. File saved to {file_path}")
+
+        logging.info(f"Download completed. File saved to {file_path}")
     def seed_torrent(self, torrent_file, port, upload_rate=None):
         """Handle the seeding process of a torrent."""
         torrent_data, info = self._load_torrent_file(torrent_file)
         info_hash = hashlib.sha1(bencodepy.encode(info)).digest()
-        print(f"Starting seeding to {self.tracker_url} on port {port} with upload rate {upload_rate}...")
+        logging.info(f"Starting seeding to {self.tracker_url} on port {port} with upload rate {upload_rate}...")
 
         peers = self.announce(info_hash, port, event='completed')
-        print(f"Seeding to peers: {peers}")
+        logging.info(f"Seeding to peers: {peers}")
         # Simulate seeding process
-        print("Seeding...")
+        logging.info("Seeding...")
 
     def show_status(self, torrent_file):
         """Show the status of a torrent."""
         torrent_data, _ = self._load_torrent_file(torrent_file)
-        print("Torrent status:")
-        print(f"Tracker: {self.tracker_url}")
+        logging.info("Torrent status:")
+        logging.info(f"Tracker: {self.tracker_url}")
         # Simulate fetching and showing status
 
     def show_peers(self, torrent_file):
         """Show the list of peers for a torrent."""
         torrent_data, info = self._load_torrent_file(torrent_file)
         info_hash = hashlib.sha1(bencodepy.encode(info)).digest()
-        print(f"Fetching peers from {self.tracker_url}...")
+        logging.info(f"Fetching peers from {self.tracker_url}...")
 
         peers = self.announce(info_hash, port=6881)  # Use default port
         table = [[peer['ip'], peer['port']] for peer in peers]
-        print(f"Peers for {torrent_file}:\n")
-        print(tabulate(table, headers=["IP Address", "Port"], tablefmt="grid"))
+        logging.info(f"Peers for {torrent_file}:\n")
+        logging.info("\n" + tabulate(table, headers=["IP Address", "Port"], tablefmt="grid"))
 
     def stop_torrent(self, torrent_file):
         """Stop the torrent download or seeding."""
         torrent_data, info = self._load_torrent_file(torrent_file)
         info_hash = hashlib.sha1(bencodepy.encode(info)).digest()
-        print(f"Stopping torrent {torrent_file}...")
+        logging.info(f"Stopping torrent {torrent_file}...")
 
         # Notify tracker that we're stopping
         self.announce(info_hash, port=6881, event='stopped')
-        print("Torrent stopped.")
+        logging.info("Torrent stopped.")
 
     def remove_torrent(self, torrent_file):
         """Remove the torrent from the client."""
-        print(f"Removing torrent {torrent_file} from the client...")
+        logging.info(f"Removing torrent {torrent_file} from the client...")
         # Simulate removing torrent (e.g., remove from a list or database)
 
     def _parse_compact_peers(self, peers):
@@ -162,6 +199,7 @@ class ClientNode:
 
             # Lấy thông tin về torrents
             files_info = response_data.get(b'files', {})
+
             if info_hash in files_info:
                 torrent_info = files_info[info_hash]
                 complete = torrent_info.get(b'complete', 0)
@@ -173,32 +211,33 @@ class ClientNode:
                     'downloaded': downloaded
                 }
             else:
-                print("No information found for the given info_hash.")
+                logging.info("No information found for the given info_hash.")
                 return None
 
         except requests.RequestException as e:
-            print(f"Error during scrape request: {e}")
+            logging.error(f"Error during scrape request: {e}")
             return None
 
     def scrape_peers(self, torrent_file):
         """Scrape the tracker for peer information."""
         torrent_data, info = self._load_torrent_file(torrent_file)
         info_hash = hashlib.sha1(bencodepy.encode(info)).digest()
-        print(f"Scraping tracker for peer information...")
+        logging.info(f"Scraping tracker for peer information...")
         stats = self.scrape(info_hash)
+        
         if stats:
             table = [
                 ["Seeders (complete)", stats['complete']],
                 ["Leechers (incomplete)", stats['incomplete']],
                 ["Total downloaded", stats['downloaded']]
             ]
-            print(f"Scrape info for {torrent_file}:\n")
-            print(tabulate(table, headers=["Description", "Count"], tablefmt="grid"))
+            logging.info(f"Scrape info for {torrent_file}:\n")
+            logging.info("\n" + tabulate(table, headers=["Description", "Count"], tablefmt="grid"))
 
     def sign_out(self):
         """Notify tracker that the client is offline if an event was announced."""
         if not self.has_announced:
-            print("No event announced, skipping sign out.")
+            logging.info("No event announced, skipping sign out.")
             return
 
         params = {
@@ -209,6 +248,6 @@ class ClientNode:
         try:
             response = requests.get(self.tracker_url, params=params)
             response.raise_for_status()
-            print("Signed out successfully.")
+            logging.info("Signed out successfully.")
         except requests.RequestException as e:
-            print(f"Error during sign out request: {e}")
+            logging.error(f"Error during sign out request: {e}")
