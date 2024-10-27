@@ -1,6 +1,7 @@
+import argparse
+import os
 import bencodepy
 import hashlib
-import os
 
 class MetainfoStorage:
     def __init__(self, torrent_file=None):
@@ -96,3 +97,17 @@ class MetainfoStorage:
             f.write(bencodepy.encode(torrent_data))
         
         print(f"Torrent file '{output_torrent}' created successfully.")
+
+def main():
+    parser = argparse.ArgumentParser(description="Create a torrent file.")
+    parser.add_argument('files', nargs='+', help='List of files to include in the torrent')
+    parser.add_argument('--tracker', required=True, help='Tracker address')
+    parser.add_argument('--output', default='output.torrent', help='Output torrent file name')
+    parser.add_argument('--piece-length', type=int, default=524288, help='Piece length in bytes (default: 512 KB)')
+
+    args = parser.parse_args()
+
+    MetainfoStorage.create_torrent_file(args.files, args.tracker, args.output, args.piece_length)
+
+if __name__ == '__main__':
+    main()

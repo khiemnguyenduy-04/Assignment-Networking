@@ -4,6 +4,7 @@ from client_list import ClientList
 import bencodepy
 import threading
 import logging
+import argparse
 
 def decode_info_hash(url_encoded_string):
     decoded_string = bytearray()
@@ -155,4 +156,7 @@ def run(server_class=ThreadingHTTPServer, handler_class=TrackerServer, port=DEFA
 
 
 if __name__ == "__main__":
-    run()
+    parser = argparse.ArgumentParser(description="Run the tracker server.")
+    parser.add_argument('--port', type=int, default=DEFAULT_PORT, help='Port to run the tracker server on')
+    args = parser.parse_args()
+    run(port=args.port)
