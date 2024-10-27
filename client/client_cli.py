@@ -12,14 +12,14 @@ def main():
     download_parser = subparsers.add_parser('download')
     download_parser.add_argument('torrent_file', help='Path to the torrent file')
     download_parser.add_argument('--port', type=int, default=6881, help='Port to use for downloading')
-    download_parser.add_argument('--download-dir', help='Directory to save downloaded files')
+    download_parser.add_argument('--download-dir', help='Directory to save the downloaded file')
 
     # Command seed
     seed_parser = subparsers.add_parser('seed')
     seed_parser.add_argument('torrent_file', help='Path to the torrent file')
-    seed_parser.add_argument('complete_file', help='Path to the complete file to be seeded')
-    seed_parser.add_argument('--port', type=int, default=6881, help='Port to use for seeding')
-    seed_parser.add_argument('--upload-rate', type=int, help='Upload rate limit (KB/s)')
+    seed_parser.add_argument('complete_file', help='Path to the complete file to seed')
+    seed_parser.add_argument('--port', type=int, default=6882, help='Port to use for seeding')
+    seed_parser.add_argument('--upload-rate', type=int, help='Upload rate limit in KB/s')
 
     # Command status
     status_parser = subparsers.add_parser('status')
@@ -28,8 +28,8 @@ def main():
     # Command peers
     peers_parser = subparsers.add_parser('peers')
     peers_parser.add_argument('torrent_file', help='Path to the torrent file')
-    peers_parser.add_argument('--scrape', action='store_true', help='Scrape tracker for peer information')
-    peers_parser.add_argument('--get', action='store_true', help='Get peers from tracker')
+    peers_parser.add_argument('--scrape', action='store_true', help='Scrape the tracker for peer information')
+    peers_parser.add_argument('--get', action='store_true', help='Get the list of peers from the tracker')
 
     # Command stop
     stop_parser = subparsers.add_parser('stop')

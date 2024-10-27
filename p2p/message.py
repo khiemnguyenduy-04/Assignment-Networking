@@ -21,6 +21,7 @@ class Message:
         self.ID = message_id
         self.Payload = payload or bytearray()
 
+    
     @classmethod
     def format_request(cls, index, begin, length):
         payload = struct.pack('>III', index, begin, length)
@@ -30,6 +31,11 @@ class Message:
     def format_have(cls, index):
         payload = struct.pack('>I', index)
         return cls(message_id=MessageID.MsgHave, payload=payload)
+
+    @classmethod
+    def format_piece(cls, index, begin, block):
+        payload = struct.pack('>II', index, begin) + block
+        return cls(message_id=MessageID.MsgPiece, payload=payload)
 
     @staticmethod
     def parse_piece(index, buf, msg):

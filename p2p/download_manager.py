@@ -11,15 +11,12 @@ import hashlib
 from p2p.peer_communication import Communicator
 from p2p.peer import Peer
 from p2p.message import Message, MessageID
+from p2p.piece import Piece
 # Constants
 MAX_BLOCK_SIZE = 16384  # 16 KB
 MAX_BACKLOG = 5  # Number of unfulfilled requests
 
-class Piece:
-    def __init__(self, index, length, hash):
-        self.index = index
-        self.length = length
-        self.hash = hash
+
 
 
  
@@ -60,6 +57,8 @@ def download_worker(peer, work_queue, results_queue, info_hash, peer_id):
             work_queue.put(piece)
 # Function to download a specific piece from a peer
 def download_piece(client, piece):
+
+    ## Implement pipeline download here
     downloaded = 0
     requested = 0
     backlog = 0

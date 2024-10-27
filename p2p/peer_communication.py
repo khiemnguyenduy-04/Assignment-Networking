@@ -13,10 +13,10 @@ from p2p.handshake import Handshake
 import logging
 
 class Communicator:
-    def __init__(self, peer: Peer, peer_id: bytes, info_hash: bytes):
+    def __init__(self, peer: Peer, peer_id: bytes, info_hash: bytes, bitfield: Bitfield = None):
         self.conn = None
         self.choked = True
-        self.bitfield = None
+        self.bitfield = bitfield
         self.peer = peer
         self.info_hash = info_hash
         self.peer_id = peer_id
@@ -41,6 +41,13 @@ class Communicator:
         if res.info_hash != self.info_hash:
             raise ValueError(f"Expected infohash {self.info_hash.hex()} but got {res.info_hash.hex()}")
         logging.debug("Received valid handshake response")
+
+        # Send bitfield after handshake if available
+        # Để thực hiện seeding, client cần gửi bitfield cho peer
+        if self.bitfield:
+            bitfield_msg = Message(message_id=MessageID.MsgBitfield, payload=self.bitfield.to_bytes())
+            self.conn.send(bitfield_msg.serialize())
+            logging.debug("Sent bitfield")
 
     def recv_bitfield(self):
         """Receive bitfield from peer."""
