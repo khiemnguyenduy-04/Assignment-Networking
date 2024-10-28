@@ -2,6 +2,7 @@ import argparse
 import os
 import bencodepy
 import hashlib
+import logging
 
 class MetainfoStorage:
     def __init__(self, torrent_file=None):
@@ -96,7 +97,7 @@ class MetainfoStorage:
         with open(output_torrent, 'wb') as f:
             f.write(bencodepy.encode(torrent_data))
         
-        print(f"Torrent file '{output_torrent}' created successfully.")
+        logging.info(f"Torrent file '{output_torrent}' created successfully.")
 
 def main():
     parser = argparse.ArgumentParser(description="Create a torrent file.")

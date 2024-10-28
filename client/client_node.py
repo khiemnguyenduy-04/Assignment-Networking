@@ -155,7 +155,7 @@ class ClientNode:
             pieces.append(Piece(i // piece_length, length, piece_hash))
 
         # Initialize the UploadingManager
-        self.uploading_manager = UploadingManager(pieces, self.peer_id.encode("utf-8"), info_hash, complete_file)
+        self.uploading_manager = UploadingManager(pieces, self.peer_id.encode("utf-8"), info_hash, complete_file, total_length)
 
         # Start a server to accept incoming connections from peers
         server_thread = threading.Thread(target=self._start_seeding_server, args=(port or self.upload_port,))
@@ -175,7 +175,7 @@ class ClientNode:
                 client_socket, client_address = server_socket.accept()
                 logging.info(f"Accepted connection from {client_address}")
                 peer = Peer(client_address[0], client_address[1])
-                self.uploading_manager.add_peer(peer)
+                self.uploading_manager.add_peer(peer, client_socket)
             except socket.timeout:
                 continue
             except Exception as e:
