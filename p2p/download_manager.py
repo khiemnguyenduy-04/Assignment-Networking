@@ -131,32 +131,64 @@ def check_piece_integrity(piece, data):
     logging.debug(f"Calculated hash: {piece_hash.hex()}, Expected hash: {expected_hash.hex()}")
     return piece_hash == expected_hash
 
-# Assemble all downloaded pieces into the final file
-def assemble_file(results_queue, file_path):
-    pieces = []
+# Assemble all downloaded pieces into the final files
+
+def assemble_file(results_queue, download_dir, files, piece_length):
+    if not os.path.exists(download_dir):
+        os.makedirs(download_dir)
+
+    file_data = {}
     while not results_queue.empty():
         index, piece_data = results_queue.get()
-        pieces.append((index, piece_data))
-    
-    # Sắp xếp dữ liệu theo index
-    pieces.sort()
-    
-    # Ghép nối dữ liệu đã sắp xếp
-    file_data = bytearray()
-    for _, piece_data in pieces:
-        file_data.extend(piece_data)
+        file_data[index] = piece_data
 
-    with open(file_path, "wb") as f:
-        f.write(file_data)
+    global_piece_index = 0
 
-# Hàm tạo file nếu chưa tồn tại
-def prepare_download_file(file_path):
-    if not os.path.exists(file_path):
-        with open(file_path, 'w') as f:
-            pass  # Tạo file rỗng
+    for file_info in files:
+        file_path = os.path.join(download_dir, *file_info['path'])
+        file_dir = os.path.dirname(file_path)
 
-def start_download(peers, pieces, info_hash, peer_id, file_path):
-    prepare_download_file(file_path)
+        # Ensure the directory exists, but avoid creating a directory with the same name as the file
+        if file_dir and not os.path.exists(file_dir):
+            os.makedirs(file_dir)
+
+        total_file_length = file_info['length']
+        with open(file_path, 'wb') as f:
+            file_offset = 0
+            remaining_piece_data = None  # Biến lưu trữ dữ liệu còn lại của mảnh
+
+            while file_offset < total_file_length:
+                if global_piece_index in file_data:
+                    piece_data = file_data[global_piece_index]
+
+                    # Nếu còn dữ liệu từ mảnh trước đó
+                    if remaining_piece_data is not None:
+                        piece_data = remaining_piece_data + piece_data
+                        remaining_piece_data = None  # Đặt lại biến còn lại
+
+                    piece_size = min(piece_length, total_file_length - file_offset)
+
+                    if len(piece_data) <= piece_size:
+                        f.write(piece_data)  # Ghi toàn bộ mảnh nếu có đủ dữ liệu
+                        file_offset += len(piece_data)
+                    else:
+                        # Ghi một phần dữ liệu mảnh vào file và lưu phần còn lại
+                        f.write(piece_data[:piece_size])
+                        remaining_piece_data = piece_data[piece_size:]  # Lưu phần còn lại cho lần ghi tiếp theo
+                        file_offset += piece_size
+
+                global_piece_index += 1  # Tăng chỉ số toàn cục
+
+
+
+def prepare_download_file(download_dir):
+    if not os.path.exists(download_dir):
+        os.makedirs(download_dir)
+
+def start_download(peers, pieces, info_hash, peer_id, download_dir, files):
+    logging.info(f"dowload_dir: {download_dir}")
+    if files is not None:
+        prepare_download_file(download_dir)
 
     # Tạo hàng đợi công việc và hàng đợi kết quả
     work_queue = queue.Queue()
@@ -182,8 +214,13 @@ def start_download(peers, pieces, info_hash, peer_id, file_path):
     # Kiểm tra xem tất cả các mảnh đã tải thành công chưa
     downloaded_pieces = results_queue.qsize()
     if downloaded_pieces == total_pieces:
-        assemble_file(results_queue, file_path)
-        logging.info(f"Download completed. File saved to {file_path}")
+        if files is None:
+            # Nếu files là None, tạo một danh sách chứa thông tin về tệp duy nhất
+            total_length = sum(piece.length for piece in pieces)
+            files = [{'path': [os.path.basename(download_dir)], 'length': total_length}]
+            logging.info(f"files is None. Creating a single file entry. {files} on {download_dir}")
+        assemble_file(results_queue, os.path.dirname(download_dir), files, pieces[0].length)
+        logging.info(f"Download completed. Files saved to {download_dir}")
     else:
         download_successful = False
         logging.error("Download incomplete: Some pieces failed to download due to timeouts.")

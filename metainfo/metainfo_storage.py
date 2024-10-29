@@ -42,48 +42,66 @@ class MetainfoStorage:
             return self.info[b'length']
 
     @staticmethod
-    def calculate_piece_hashes(file_path, piece_length):
+    def calculate_piece_hashes(file_list, piece_length):
         pieces = []
-        with open(file_path, 'rb') as f:
-            while True:
-                piece = f.read(piece_length)
-                if not piece:
-                    break
-                pieces.append(hashlib.sha1(piece).digest())
+        buffer = bytearray()
+        for file_path in file_list:
+            with open(file_path, 'rb') as f:
+                while True:
+                    piece = f.read(piece_length - len(buffer))
+                    if not piece:
+                        break
+                    buffer.extend(piece)
+                    while len(buffer) >= piece_length:
+                        pieces.append(hashlib.sha1(buffer[:piece_length]).digest())
+                        buffer = buffer[piece_length:]
+        if buffer:
+            pieces.append(hashlib.sha1(buffer).digest())
         return b''.join(pieces)
 
     @staticmethod
-    def create_torrent_file(file_list, tracker_address, output_torrent='output.torrent', piece_length=524288):
+    def create_torrent_file(input_path, tracker_address, output_torrent='output.torrent', piece_length=524288):
         # piece_length = 524288 means 512 KB per piece, you can adjust this
         
         # Gather file information
         files = []
         total_length = 0
-        for file_path in file_list:
+        if os.path.isdir(input_path):
+            for root, _, filenames in os.walk(input_path):
+                for filename in filenames:
+                    file_path = os.path.join(root, filename)
+                    file_info = {
+                        "length": os.path.getsize(file_path),
+                        "path": os.path.relpath(file_path, input_path).split(os.sep)
+                    }
+                    files.append(file_info)
+                    total_length += os.path.getsize(file_path)
+        else:
             file_info = {
-                "length": os.path.getsize(file_path),
-                "path": [os.path.basename(file_path)]
+                "length": os.path.getsize(input_path),
+                "path": [os.path.basename(input_path)]
             }
             files.append(file_info)
-            total_length += os.path.getsize(file_path)
+            total_length += os.path.getsize(input_path)
         
         # Build torrent metadata (info dictionary)
-        if len(file_list) == 1:
+        if len(files) == 1:
             # Single file mode
-            file_path = file_list[0]
+            file_path = input_path
             torrent_info = {
                 'name': os.path.basename(file_path),
                 'length': os.path.getsize(file_path),
                 'piece length': piece_length,
-                'pieces': MetainfoStorage.calculate_piece_hashes(file_path, piece_length)
+                'pieces': MetainfoStorage.calculate_piece_hashes([file_path], piece_length)
             }
         else:
             # Multi-file mode
+            full_paths = [os.path.join(input_path, *file['path']) for file in files]
             torrent_info = {
-                'name': 'files',  # You can customize this
+                'name': os.path.basename(input_path) if os.path.isdir(input_path) else 'files',
                 'files': files,
                 'piece length': piece_length,
-                'pieces': b''.join([MetainfoStorage.calculate_piece_hashes(file_path, piece_length) for file_path in file_list])
+                'pieces': MetainfoStorage.calculate_piece_hashes(full_paths, piece_length)
             }
 
         # Create final torrent file structure
@@ -101,14 +119,16 @@ class MetainfoStorage:
 
 def main():
     parser = argparse.ArgumentParser(description="Create a torrent file.")
-    parser.add_argument('files', nargs='+', help='List of files to include in the torrent')
+    parser.add_argument('input_path', help='Path to the file or directory to include in the torrent')
     parser.add_argument('--tracker', required=True, help='Tracker address')
     parser.add_argument('--output', default='output.torrent', help='Output torrent file name')
     parser.add_argument('--piece-length', type=int, default=524288, help='Piece length in bytes (default: 512 KB)')
 
     args = parser.parse_args()
 
-    MetainfoStorage.create_torrent_file(args.files, args.tracker, args.output, args.piece_length)
+    MetainfoStorage.create_torrent_file(args.input_path, args.tracker, args.output, args.piece_length)
 
 if __name__ == '__main__':
     main()
+
+    #python metainfo_storage.py ../torrent_example --tracker http://192.168.1.11/announce  --output multiple.torrent

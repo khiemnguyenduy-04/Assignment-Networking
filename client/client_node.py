@@ -41,12 +41,20 @@ class ClientNode:
 
     def _load_torrent_file(self, torrent_file):
         """Load and parse the .torrent file."""
+        def decode_keys(data):
+            """Recursively decode keys in a dictionary."""
+            if isinstance(data, dict):
+                return {k.decode('utf-8'): decode_keys(v) for k, v in data.items()}
+            elif isinstance(data, list):
+                return [decode_keys(item) for item in data]
+            else:
+                return data
+
         with open(torrent_file, 'rb') as f:
             torrent_data = bencodepy.decode(f.read())
         self.torrent_file = torrent_file
-        torrent_data = {k.decode('utf-8'): v for k, v in torrent_data.items()}
-        torrent_data['info'] = {k.decode('utf-8'): v for k, v in torrent_data['info'].items()}  # Decode info keys
-        self.tracker_url = torrent_data['announce'].decode('utf-8')
+        torrent_data = decode_keys(torrent_data)
+        self.tracker_url = torrent_data['announce']
         self.torrent_data = torrent_data
         return torrent_data, torrent_data['info']
 
@@ -125,13 +133,18 @@ class ClientNode:
             file_name = file_name.decode('utf-8')
 
         # Determine the file path to save the downloaded file
-        file_path = os.path.join(download_dir if download_dir else os.getcwd(), file_name)
+        if 'files' in info:
+            # Multi-file mode
+            file_path = download_dir if download_dir else os.getcwd()
+        else:
+            # Single-file mode
+            file_path = os.path.join(download_dir if download_dir else os.getcwd(), file_name)
 
         peer_id_encoded = self.peer_id.encode("utf-8")
         # Start the download process
-        start_download(peers, pieces, info_hash, peer_id_encoded, file_path)
+        start_download(peers, pieces, info_hash, peer_id_encoded, file_path, info['files'] if 'files' in info else None)
 
-        logging.info(f"Download completed. File saved to {file_path}")
+        logging.info(f"Download completed. Files saved to {file_path}")
 
     def seed_torrent(self, torrent_file, complete_file, port=None, upload_rate=None):
         """Handle the seeding process of a torrent."""
@@ -155,7 +168,16 @@ class ClientNode:
             pieces.append(Piece(i // piece_length, length, piece_hash))
 
         # Initialize the UploadingManager
-        self.uploading_manager = UploadingManager(pieces, self.peer_id.encode("utf-8"), info_hash, complete_file, total_length)
+        if 'files' in info:
+            # Multi-file mode
+            file_paths = [os.path.join(complete_file, *file['path']) for file in info['files']]
+            total_lengths = [file['length'] for file in info['files']]
+        else:
+            # Single-file mode
+            file_paths = [complete_file]
+            total_lengths = [total_length]
+
+        self.uploading_manager = UploadingManager(pieces, self.peer_id.encode("utf-8"), info_hash, file_paths, total_lengths)
 
         # Start a server to accept incoming connections from peers
         server_thread = threading.Thread(target=self._start_seeding_server, args=(port or self.upload_port,))
