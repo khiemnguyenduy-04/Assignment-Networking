@@ -15,7 +15,7 @@ class MessageID:
     MsgRequest = 6
     MsgPiece = 7
     MsgCancel = 8
-
+    MsgExtended = 20
 class Message:
     def __init__(self, message_id=None, payload=None):
         self.ID = message_id
@@ -36,7 +36,11 @@ class Message:
     def format_piece(cls, index, begin, block):
         payload = struct.pack('>II', index, begin) + block
         return cls(message_id=MessageID.MsgPiece, payload=payload)
-
+    @classmethod
+    def format_extended(cls, ext_id, payload):
+        payload = struct.pack('>B', ext_id) + payload
+        return cls(message_id=MessageID.MsgExtended, payload=payload)
+    
     @staticmethod
     def parse_piece(index, buf, msg):
         if msg.ID != MessageID.MsgPiece:
@@ -58,7 +62,16 @@ class Message:
 
         buf[begin:begin + len(data)] = data
         return len(data)
+    @staticmethod
+    def parse_extended(msg):
+        if msg.ID != MessageID.MsgExtended:
+            raise ValueError(f"Expected EXTENDED (ID {MessageID.MsgExtended}), got ID {msg.ID}")
+        if len(msg.Payload) < 1:
+            raise ValueError(f"Payload too short. {len(msg.Payload)} < 1")
 
+        ext_id = struct.unpack('>B', msg.Payload[0:1])[0]
+        payload = msg.Payload[1:]
+        return ext_id, payload
     @staticmethod
     def parse_have(msg):
         if msg.ID != MessageID.MsgHave:
@@ -135,6 +148,7 @@ class Message:
             MessageID.MsgRequest: "Request",
             MessageID.MsgPiece: "Piece",
             MessageID.MsgCancel: "Cancel",
+            MessageID.MsgExtended: "Extended",
         }
         return message_names.get(self.ID, f"Unknown#{self.ID}")
 

@@ -7,13 +7,14 @@ import os
 import sys
 import socket
 import threading
+from tqdm import tqdm
 
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
 
 import hashlib
 import logging
 from tabulate import tabulate
-from p2p.download_manager import start_download
+from p2p.download_manager import DownloadingManager
 from p2p.peer import Peer
 from p2p.upload_manager import UploadingManager
 from p2p.piece import Piece
@@ -36,6 +37,7 @@ class ClientNode:
         self.download_port = 6881
         self.upload_port = 6882
         self.announce_port = 6883
+        self.downloadding_manager = None
         self.uploading_manager = None
         self.stop_event = threading.Event()  # Event to signal the server thread to stop
 
@@ -142,43 +144,46 @@ class ClientNode:
 
         peer_id_encoded = self.peer_id.encode("utf-8")
         # Start the download process
-        start_download(peers, pieces, info_hash, peer_id_encoded, file_path, info['files'] if 'files' in info else None)
-
-        logging.info(f"Download completed. Files saved to {file_path}")
+        with tqdm(total=total_length, unit='B', unit_scale=True, desc=file_name) as pbar:
+            self.downloading_manager = DownloadingManager(progress_bar=pbar)  # Pass progress bar
+            if self.downloading_manager.start_download(peers, pieces, info_hash, peer_id_encoded, file_path, info['files'] if 'files' in info else None):
+                self.announce(info_hash, port or self.download_port, event='completed')
+                logging.info(f"Download completed. Files saved to {file_path}")
+            else:
+                logging.error("Download failed.")
 
     def seed_torrent(self, torrent_file, complete_file, port=None, upload_rate=None):
         """Handle the seeding process of a torrent."""
         torrent_data, info = self._load_torrent_file(torrent_file)
         info_hash = hashlib.sha1(bencodepy.encode(info)).digest()
         logging.info(f"Starting seeding to {self.tracker_url} on port {port or self.upload_port} with upload rate {upload_rate}...")
-
         peers = self.announce(info_hash, port or self.upload_port, event='completed')
         logging.info(f"Seeding to peers: {peers}")
         peers = [Peer(peer['ip'], peer['port']) for peer in peers]
-
+        
         # Get the piece length and the total length of the file
         piece_length = info['piece length']
         total_length = sum(file['length'] for file in info['files']) if 'files' in info else info['length']
         pieces = []
-
+        
         # Create Piece objects for each piece in the torrent
         for i in range(0, total_length, piece_length):
             length = min(piece_length, total_length - i)
             piece_hash = info['pieces'][i // piece_length * 20:(i // piece_length + 1) * 20]
             pieces.append(Piece(i // piece_length, length, piece_hash))
-
+        
         # Initialize the UploadingManager
         if 'files' in info:
             # Multi-file mode
-            file_paths = [os.path.join(complete_file, *file['path']) for file in info['files']]
+            file_paths = [os.path.join(complete_file, *[part.decode('utf-8') if isinstance(part, bytes) else part for part in file['path']]) for file in info['files']]
             total_lengths = [file['length'] for file in info['files']]
         else:
             # Single-file mode
             file_paths = [complete_file]
             total_lengths = [total_length]
-
+        
         self.uploading_manager = UploadingManager(pieces, self.peer_id.encode("utf-8"), info_hash, file_paths, total_lengths)
-
+        
         # Start a server to accept incoming connections from peers
         server_thread = threading.Thread(target=self._start_seeding_server, args=(port or self.upload_port,))
         server_thread.start()
