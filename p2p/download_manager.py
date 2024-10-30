@@ -25,12 +25,19 @@ class DownloadingManager:
     def __init__(self, progress_bar=None):
         self.downloaded_pieces = 0
         self.downloaded_pieces_lock = threading.Lock()
-        self.all_pieces_downloaded = False
+        self.peer_clients = []
         self.progress_bar = progress_bar  # Add progress bar
+
+        # Thông báo `NotInterested` cho tất cả các peer
+    def notify_all_peers_not_interested(self):
+        for client in self.peer_clients:
+            client.send_not_interested()
+            logging.info(f"Sent NotInterested to peer {client.peer}")
 
     # Worker to download pieces from peers
     def download_worker(self, peer, work_queue, results_queue, info_hash, peer_id, total_pieces):
         client = Communicator(peer, peer_id, info_hash)
+        self.peer_clients.append(client)
         logging.info(f"Starting download from peer {peer}")
 
         # gửi ngay sau khi kết nối
@@ -38,10 +45,6 @@ class DownloadingManager:
         # client.send_unchoke()
 
         while not work_queue.empty():
-            if (self.all_pieces_downloaded):
-                client.send_not_interested()
-                logging.info(f"Sent NotInterested to peer {peer}")
-                break
             piece = work_queue.get()
             logging.debug(f"Downloading piece {piece.index} from peer {peer}")
             logging.debug(f"Client bitfield: {client.bitfield}")
@@ -61,7 +64,7 @@ class DownloadingManager:
                                 self.progress_bar.update(1)  # Update progress bar
                             logging.info(f"DOWLOADED_PIECES: {self.downloaded_pieces} - TOTAL_PIECES: {total_pieces}")  
                             if self.downloaded_pieces >= total_pieces:
-                                self.all_pieces_downloaded = True
+                                self.notify_all_peers_not_interested()
                                 logging.info("All pieces downloaded; notifying peers.")
                     else:
                         logging.info(f"Piece {piece.index} failed integrity check")
