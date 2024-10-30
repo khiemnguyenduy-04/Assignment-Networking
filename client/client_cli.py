@@ -23,7 +23,7 @@ def main():
 
     # Command status
     status_parser = subparsers.add_parser('status')
-    status_parser.add_argument('torrent_file', help='Path to the torrent file')
+    
 
     # Command peers
     peers_parser = subparsers.add_parser('peers')
@@ -50,7 +50,7 @@ def main():
             elif args.command == 'seed':
                 client.seed_torrent(args.torrent_file, args.complete_file, port=args.port, upload_rate=args.upload_rate)
             elif args.command == 'status':
-                client.show_status(args.torrent_file)
+                client.show_status()
             elif args.command == 'peers':
                 if args.scrape:
                     client.scrape_peers(args.torrent_file)
@@ -86,7 +86,7 @@ def main():
             elif args.command == 'seed':
                 client.seed_torrent(args.torrent_file, args.complete_file, port=args.port, upload_rate=args.upload_rate)
             elif args.command == 'status':
-                client.show_status(args.torrent_file)
+                client.show_status()
             elif args.command == 'peers':
                 if args.scrape:
                     client.scrape_peers(args.torrent_file)

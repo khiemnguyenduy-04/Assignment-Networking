@@ -126,6 +126,9 @@ class TrackerServer(BaseHTTPRequestHandler):
             self.send_header("Content-Type", "text/plain")
             self.end_headers()
             self.wfile.write(bencodepy.encode(response))
+        else:
+            response = { "failure reason": "no info_hash parameter suppliede" }
+            self.send_response(bencodepy.encode(response))
 
     def handle_scrape(self, params):
         info_hash = params.get("info_hash", [None])[0]

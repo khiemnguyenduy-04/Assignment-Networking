@@ -40,6 +40,8 @@ class ClientNode:
         self.downloadding_manager = None
         self.uploading_manager = None
         self.stop_event = threading.Event()  # Event to signal the server thread to stop
+        self.seeding_files = {}  # Dictionary to store seeding files info
+        self.announced_trackers = set()  # Set to store announced trackers
 
     def _load_torrent_file(self, torrent_file):
         """Load and parse the .torrent file."""
@@ -88,6 +90,7 @@ class ClientNode:
             response.raise_for_status()
             response_data = bencodepy.decode(response.content)
             self.has_announced = True  # Confirm that the client has announced to the tracker
+            self.announced_trackers.add(self.tracker_url)  # Add the tracker to the announced trackers set
             if b'failure reason' in response_data:
                 logging.error(f"Tracker error: {response_data[b'failure reason'].decode()}")
                 return []
@@ -187,6 +190,7 @@ class ClientNode:
         # Start a server to accept incoming connections from peers
         server_thread = threading.Thread(target=self._start_seeding_server, args=(port or self.upload_port,))
         server_thread.start()
+        self.seeding_files[torrent_file] = (file_paths, self.tracker_url)  # Add to seeding files
 
     def _start_seeding_server(self, port):
         """Start a server to accept incoming connections from peers."""
@@ -212,13 +216,14 @@ class ClientNode:
         server_socket.close()
         logging.info("Seeding server stopped.")
 
-    def show_status(self, torrent_file):
+    def show_status(self):
         """Show the status of a torrent."""
-        torrent_data, _ = self._load_torrent_file(torrent_file)
-        logging.info("Torrent status:")
-        logging.info(f"Tracker: {self.tracker_url}")
-        # Simulate fetching and showing status
-
+        logging.info(f"Peer ID: {self.peer_id}")
+        seeding_table = [[torrent, path, tracker] for torrent, (path, tracker) in self.seeding_files.items()]
+        if seeding_table:
+            logging.info("\nSeeding Torrents:\n" + tabulate(seeding_table, headers=["Torrent File", "Path", "Tracker"], tablefmt="grid"))
+        else:
+            logging.info("No seeding torrents.")
     def show_peers(self, torrent_file):
         """Show the list of peers for a torrent."""
         torrent_data, info = self._load_torrent_file(torrent_file)
@@ -307,7 +312,7 @@ class ClientNode:
                 ["Total downloaded", stats['downloaded']]
             ]
             logging.info(f"Scrape info for {torrent_file}:\n")
-            logging.info("\n" + tabulate(table, headers=["Description", "Count"], tablefmt="grid"))
+            logging.info("\n" + tabulate(table, headers=["Description", "Count"], tablefmt="grid", maxcolwidths=[None, 20]))
 
     def sign_out(self):
         """Notify tracker that the client is offline if an event was announced."""
@@ -321,9 +326,11 @@ class ClientNode:
             'event': 'stopped'
         }
         try:
-            response = requests.get(self.tracker_url, params=params)
-            response.raise_for_status()
-            logging.info("Signed out successfully.")
+            for tracker_url in self.announced_trackers:
+                response = requests.get(tracker_url, params=params)
+                response.raise_for_status()
+                logging.info(f"Signed out from tracker: {tracker_url}")
+            logging.info("Signed out successfully from all trackers.")
         except requests.RequestException as e:
             logging.error(f"Error during sign out request: {e}")
         finally:
