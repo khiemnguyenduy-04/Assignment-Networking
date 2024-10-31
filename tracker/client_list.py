@@ -57,7 +57,6 @@ class ClientList:
             return 0
         return len(self.peers[info_hash]) - self.get_complete_count(info_hash)
 
-
     def get_scrape_info(self, info_hash):
         if info_hash not in self.peers:
             return {}
@@ -72,11 +71,15 @@ class ClientList:
                 b'downloaded': len(self.peers[info_hash])
             }
         }
+
     def get_all_clients(self):
         if not self.peers:
             return []
         all_clients = []
         for peer_dict in self.peers.values():
             for peer_id, peer_info in peer_dict.items():
-                all_clients.append((peer_id, peer_info["ip"], peer_info["port"]))
+                all_clients.append({
+                    "id": peer_id,
+                    "ip": peer_info["ip"]
+                })
         return all_clients

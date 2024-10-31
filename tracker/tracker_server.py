@@ -131,8 +131,11 @@ class TrackerServer(BaseHTTPRequestHandler):
             self.end_headers()
             self.wfile.write(bencodepy.encode(response))
         else:
-            response = { "failure reason": "no info_hash parameter suppliede" }
-            self.send_response(bencodepy.encode(response))
+            response_data = { "failure reason": "no info_hash parameter suppliede" }
+            self.send_response(200)
+            self.send_header("Content-Type", "text/plain")
+            self.end_headers()
+            self.wfile.write(bencodepy.encode(response_data))
 
     def handle_scrape(self, params):
         info_hash = params.get("info_hash", [None])[0]
@@ -154,6 +157,34 @@ class TrackerServer(BaseHTTPRequestHandler):
         self.end_headers()
         self.wfile.write(bencodepy.encode(response))
 
+    def handle_ping(self, params):
+        peer_ip = params.get("peer_ip", [None])[0]
+        peer_port = int(params.get("peer_port", [None])[0]) if params.get("peer_port") else None
+
+        if peer_ip is None or peer_port is None:
+            self.send_error(400, "Missing required parameters")
+            return
+
+        try:
+            with socket.create_connection((peer_ip, peer_port), timeout=5) as sock:
+                sock.sendall(b'ping')
+                response = sock.recv(1024)
+                if response == b'pong':
+                    self.send_response(200)
+                    self.send_header("Content-Type", "text/plain")
+                    self.end_headers()
+                    self.wfile.write(b"Client is online")
+                else:
+                    self.send_response(500)
+                    self.send_header("Content-Type", "text/plain")
+                    self.end_headers()
+                    self.wfile.write(b"Unexpected response from client")
+        except Exception as e:
+            self.send_response(500)
+            self.send_header("Content-Type", "text/plain")
+            self.end_headers()
+            self.wfile.write(b"Client is offline")
+            logger.error(f"Error pinging client: {e}")
 
 def ping_all_clients(client_list):
     results = []
@@ -179,25 +210,24 @@ def ping_all_clients(client_list):
                 results.append([peer_id, peer_ip, "error"])
                 logger.error(f"Error pinging client {peer_id} ({peer_ip}): {e}")
     return results
+
 def run(server_class=ThreadingHTTPServer, handler_class=TrackerServer, port=DEFAULT_PORT, stop_event=None):
     server_address = ('', port)
     httpd = server_class(server_address, handler_class)
     logger.info(f"Starting tracker server on port {port} with multi-threading support")
-    
-    # Chạy server trong luồng riêng
-    def serve():
-        httpd.serve_forever()
-    
-    server_thread = threading.Thread(target=serve)
-    server_thread.start()
-    
-    # Đợi sự kiện dừng
-    stop_event.wait()
-    
-    # Dừng server và đợi server_thread kết thúc
-    httpd.shutdown()
-    server_thread.join()
+
+    def check_stop_event():
+        while not stop_event.is_set():
+            pass
+        httpd.shutdown()
+
+    stop_thread = threading.Thread(target=check_stop_event)
+    stop_thread.start()
+
+    httpd.serve_forever()
+    httpd.server_close()
     logger.info("Tracker server stopped.")
+
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Run the tracker server.")
@@ -220,8 +250,8 @@ if __name__ == "__main__":
                 break
             elif command[0] == 'ping':
                 try:
-                    result = ping_all_clients(TrackerServer.client_list)
-                    if result :
+                    results = ping_all_clients(TrackerServer.client_list)
+                    if results:
                         print(tabulate(results, headers=["Peer ID", "IP Address", "Status"], tablefmt="grid"))
                 except Exception as e:
                     print(f"Error executing ping_all command: {e}")
