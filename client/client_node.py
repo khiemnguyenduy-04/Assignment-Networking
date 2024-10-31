@@ -37,11 +37,14 @@ class ClientNode:
         self.download_port = 6881
         self.upload_port = 6882
         self.announce_port = 6883
+        self.ping_port = 6884
         self.downloadding_manager = None
         self.uploading_manager = None
         self.stop_event = threading.Event()  # Event to signal the server thread to stop
         self.seeding_files = {}  # Dictionary to store seeding files info
         self.announced_trackers = set()  # Set to store announced trackers
+        self.ping_thread = threading.Thread(target=self.start_ping_server)
+        self.ping_thread.start()
 
     def _load_torrent_file(self, torrent_file):
         """Load and parse the .torrent file."""
@@ -335,3 +338,24 @@ class ClientNode:
             logging.error(f"Error during sign out request: {e}")
         finally:
             self.stop_event.set()  # Signal the server thread to stop
+            self.ping_thread.join()  # Wait for the ping server thread to stop
+    def start_ping_server(self):
+            """Start a server to listen for ping requests from trackers."""
+            server_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+            server_socket.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+            server_socket.bind(('0.0.0.0', self.ping_port))
+            server_socket.listen(5)
+            logging.info(f"Ping server started on port {self.ping_port}")
+
+            while not self.stop_event.is_set():
+                try:
+                    server_socket.settimeout(1)
+                    client_socket, client_address = server_socket.accept()
+                    logging.info(f"Received ping from {client_address}")
+                    client_socket.sendall(b'pong')
+                    client_socket.close()
+                except socket.timeout:
+                    continue
+                except Exception as e:
+                    logging.error(f"Error handling ping request: {e}")
+                    break

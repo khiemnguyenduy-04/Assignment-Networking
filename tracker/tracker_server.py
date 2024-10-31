@@ -5,6 +5,8 @@ import bencodepy
 import threading
 import logging
 import argparse
+import socket
+from tabulate import tabulate
 
 def decode_info_hash(url_encoded_string):
     decoded_string = bytearray()
@@ -57,6 +59,8 @@ class TrackerServer(BaseHTTPRequestHandler):
             self.handle_announce(params)
         elif self.path.startswith("/scrape"):
             self.handle_scrape(params)
+        elif self.path.startswith("/ping"):
+            self.handle_ping(params)
         else:
             self.send_error(404, "Unknown request path")
 
@@ -151,15 +155,79 @@ class TrackerServer(BaseHTTPRequestHandler):
         self.wfile.write(bencodepy.encode(response))
 
 
-def run(server_class=ThreadingHTTPServer, handler_class=TrackerServer, port=DEFAULT_PORT):
+def ping_all_clients(client_list):
+    results = []
+    with threading.Lock():
+        all_clients = client_list.get_all_clients()
+        if not all_clients:
+            logger.info("No clients to ping")
+            return results
+        for client in all_clients:
+            peer_ip = client["ip"]
+            peer_id = client["id"]
+            try:
+                with socket.create_connection((peer_ip, 6884), timeout=5) as sock:
+                    sock.sendall(b'ping')
+                    response = sock.recv(1024)
+                    if response == b'pong':
+                        results.append([peer_id, peer_ip, "online"])
+                        logger.info(f"Client {peer_id} ({peer_ip}) is online")
+                    else:
+                        results.append([peer_id, peer_ip, "offline"])
+                        logger.info(f"Client {peer_id} ({peer_ip}) is offline")
+            except Exception as e:
+                results.append([peer_id, peer_ip, "error"])
+                logger.error(f"Error pinging client {peer_id} ({peer_ip}): {e}")
+    return results
+def run(server_class=ThreadingHTTPServer, handler_class=TrackerServer, port=DEFAULT_PORT, stop_event=None):
     server_address = ('', port)
     httpd = server_class(server_address, handler_class)
     logger.info(f"Starting tracker server on port {port} with multi-threading support")
-    httpd.serve_forever()
-
+    
+    # Chạy server trong luồng riêng
+    def serve():
+        httpd.serve_forever()
+    
+    server_thread = threading.Thread(target=serve)
+    server_thread.start()
+    
+    # Đợi sự kiện dừng
+    stop_event.wait()
+    
+    # Dừng server và đợi server_thread kết thúc
+    httpd.shutdown()
+    server_thread.join()
+    logger.info("Tracker server stopped.")
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Run the tracker server.")
     parser.add_argument('--port', type=int, default=DEFAULT_PORT, help='Port to run the tracker server on')
     args = parser.parse_args()
-    run(port=args.port)
+
+    stop_event = threading.Event()
+    server_thread = threading.Thread(target=run, args=(ThreadingHTTPServer, TrackerServer, args.port, stop_event))
+    server_thread.start()
+
+    # Enter interactive mode
+    try:
+        while True:
+            command = input(">>> ").split()
+            if not command:
+                continue
+            if command[0] == 'exit':
+                stop_event.set()
+                server_thread.join()
+                break
+            elif command[0] == 'ping':
+                try:
+                    result = ping_all_clients(TrackerServer.client_list)
+                    if result :
+                        print(tabulate(results, headers=["Peer ID", "IP Address", "Status"], tablefmt="grid"))
+                except Exception as e:
+                    print(f"Error executing ping_all command: {e}")
+            else:
+                print("Unknown command or incorrect parameters")
+    except KeyboardInterrupt:
+        stop_event.set()
+        server_thread.join()
+        print("\nExiting tracker CLI.")
