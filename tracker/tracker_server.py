@@ -6,8 +6,11 @@ import threading
 import logging
 import argparse
 import socket
+import os
+import sys
 from tabulate import tabulate
-
+sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
+import logging_config
 def decode_info_hash(url_encoded_string):
     decoded_string = bytearray()
     i = 0
@@ -68,9 +71,9 @@ class TrackerServer(BaseHTTPRequestHandler):
         info_hash = params.get("info_hash", [None])[0]
         peer_id = params.get("peer_id", [None])[0]
         port = int(params.get("port", [None])[0]) if params.get("port") else None
-        uploaded = int(params.get("uploaded", [0])[0])
-        downloaded = int(params.get("downloaded", [0])[0])
-        left = int(params.get("left", [0])[0])
+        uploaded = int(params.get("uploaded", [0])[0]) if params.get("uploaded") else None
+        downloaded = int(params.get("downloaded", [0])[0]) if params.get("downloaded") else None
+        left = int(params.get("left", [0])[0]) if params.get("left") else None
         event = params.get("event", [None])[0]
 
         if peer_id is None or port is None:
@@ -227,6 +230,7 @@ def run(server_class=ThreadingHTTPServer, handler_class=TrackerServer, port=DEFA
     httpd.serve_forever()
     httpd.server_close()
     logger.info("Tracker server stopped.")
+    print("Tracker server stopped.")
 
 
 if __name__ == "__main__":

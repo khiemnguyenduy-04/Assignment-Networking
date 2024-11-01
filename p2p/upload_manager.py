@@ -5,17 +5,19 @@ import sys
 import os
 import hashlib
 import bencodepy
+import socket
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
 from p2p.message import Message, MessageID
 from p2p.peer_communication import Communicator
 from p2p.piece import Piece
 from p2p.bitfield import Bitfield
-
+from p2p.handshake import Handshake
+import logging_config
 # Số lượng tối đa các yêu cầu tải lên có thể xử lý đồng thời
 MAX_UPLOAD_QUEUE = 5
 
 class UploadingManager:
-    def __init__(self, pieces, peer_id, info_hash, file_paths, total_lengths, metadata=None):
+    def __init__(self, pieces, peer_id, info_hash, file_paths, total_lengths, metadata=[]):
         """
         Khởi tạo UploadingManager với các mảnh mà client sở hữu.
         :param pieces: Danh sách các mảnh mà client có.
@@ -131,22 +133,42 @@ class UploadingManager:
         :param peer: Đối tượng Peer muốn kết nối.
         :param client_socket: Socket đã được chấp nhận từ peer.
         """
+        flag_extension = False
         max_index = max(self.pieces.keys()) + 1
         bitfield_array = bytearray((max_index + 7) // 8)  # Create a bytearray to hold the bitfield
         bitfield = Bitfield(bitfield_array)
 
         for i in self.pieces.keys():
             bitfield.set_piece(i)
-        communicator = Communicator(peer, self.peer_id, self.info_hash, bitfield.bitfield, client_socket)
+        communicator = Communicator(peer, self.peer_id, self.info_hash, bitfield.bitfield, client_socket,expected_pieces=len(self.metadata), metadata=self.metadata)
         communicator.send_handshake()  # Gửi handshake tới peer
-        communicator.recv_handshake()  # Nhận và xử lý handshake từ peer
-        bitfield = communicator.recv_bitfield()  # Nhận bitfield từ peer
-        if bitfield:
+        # manual recieve handshake, check extension bittorrent
+        try:
+            msg = Handshake.read(communicator.conn)
+            if msg.info_hash != self.info_hash:
+                raise ValueError(f"Expected infohash {self.info_hash.hex()} but got {msg.info_hash.hex()}")
+            logging.debug("Received valid handshake response")
+
+            # Check if the extension protocol is supported
+            if msg.extension_bittorrent is True:
+                flag_extension = True
+                logging.debug("Peer supports the extension protocol")
+            else:
+                flag_extension = False
+                logging.debug("Peer does not support the extension protocol")
+
+        except (socket.timeout, socket.error) as e:
+            logging.error(f"Error during handshake with peer {peer}: {e}")
+            raise e
+        if flag_extension is False:
+            communicator.recv_bitfield()
             communicator.send_bitfield()  # Gửi bitfield của client tới peer
             logging.info(f"Received bitfield from {communicator.peer}")
             threading.Thread(target=self.handle_peer_requests, args=(communicator,)).start()
         else:
+            communicator.send_extended_handshake()
             communicator.recv_extended_handshake()  # Nhận extended handshake từ peer
+            logging.info(f"Received extended handshake from {communicator.peer}")
             threading.Thread(target=self.handle_peer_request_metadata, args=(communicator,)).start()
         self.peers[peer] = communicator
 
@@ -197,9 +219,35 @@ class UploadingManager:
         """
         Xử lý yêu cầu metadata từ một peer cụ thể.
         """
+        logging.info(f"Handling metadata request from {communicator.peer}")
         while True:
             try:
-                communicator.handle_metadata_message()  # Xử lý metadata từ peer
+                message = communicator.read()  # Đọc thông điệp từ peer
+                if message is None:
+                    continue    
+                msg_type, payload = Message.parse_extended(message)
+                # logging.debug(f"msg_type: {msg_type} with payload: {payload}")
+                if msg_type == 0:  # Metadata request
+                    piece_index = bencodepy.decode(payload)[b'piece']
+                    if piece_index < len(self.metadata):
+                        communicator.send_metadata_piece(piece_index)
+                    else:
+                        communicator.reject_metadata_request(piece_index)
+                elif msg_type == 1:  # Metadata data (response)
+                    piece_index, data = Message.parse_metadata_response_type_1(message)
+                    while len(self.metadata) <= piece_index:
+                        self.metadata.append(None)  # Hoặc giá trị mặc định nào đó
+                    self.metadata[piece_index] = data
+                    logging.debug(f"type of metadata: {type(data)}")
+                    logging.debug(f"Received metadata piece {piece_index}")
+                elif msg_type == 2:  # Metadata reject
+                    piece_index = Message.parse_metadata_response_type_2(message)
+                    logging.warning(f"Metadata request for piece {piece_index} was rejected")
+                elif msg_type == 3:
+                    logging.info("Peer has all metadata")
+                    if Message.parse_metadata_response_type_3(message) == len(self.metadata):
+                        break
+                    break
             except Exception as e:
                 logging.error(f"Error handling peer request: {e}")
                 break

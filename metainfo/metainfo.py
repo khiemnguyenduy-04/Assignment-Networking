@@ -4,7 +4,7 @@ import bencodepy
 import hashlib
 import logging
 import urllib.parse
-
+import logging_config
 class Metainfo:
     def __init__(self, torrent_file=None):
         self.metainfo = None

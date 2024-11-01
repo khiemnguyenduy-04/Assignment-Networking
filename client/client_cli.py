@@ -1,11 +1,59 @@
 import argparse
 import os
 import sys
+import logging
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
 from client.client_node import ClientNode
 from metainfo.metainfo import Metainfo
-
+import logging_config
 def main():
+    """
+    Main function to initialize and run the Torrent Client CLI.
+    This function sets up the argument parser, defines subcommands for various
+    torrent-related operations, and handles the execution of these commands
+    based on user input. It also provides an interactive mode for continuous
+    command execution.
+    Commands:
+        download: Download a torrent file.
+            Arguments:
+                torrent_file (str): Path to the torrent file.
+                --port (int): Port to use for downloading (default: 6881).
+                --download-dir (str): Directory to save the downloaded file.
+        download_magnet: Download a torrent using a magnet link.
+            Arguments:
+                magnet_link (str): Magnet link to download the torrent.
+                --download-dir (str): Directory to save the downloaded file.
+        seed: Seed a torrent file.
+            Arguments:
+                torrent_file (str): Path to the torrent file.
+                complete_file (str): Path to the complete file to seed.
+                --port (int): Port to use for seeding (default: 6882).
+        status: Show the status of the torrent client.
+        peers: Manage peers for a torrent file.
+            Arguments:
+                torrent_file (str): Path to the torrent file.
+                --scrape (bool): Scrape the tracker for peer information.
+                --get (bool): Get the list of peers from the tracker.
+        stop: Stop a torrent file.
+            Arguments:
+                torrent_file (str): Path to the torrent file.
+        remove: Remove a torrent file.
+            Arguments:
+                torrent_file (str): Path to the torrent file.
+        create: Create a new torrent file.
+            Arguments:
+                input_path (str): Path to the file or directory to include in the torrent.
+                --tracker (str): Tracker address (required).
+                --output (str): Output torrent file name (default: 'output.torrent').
+                --piece-length (int): Piece length in bytes (default: 524288).
+                --magnet (bool): Generate magnet link.
+    Interactive Mode:
+        Allows continuous command execution until 'exit' is entered.
+    Exceptions:
+        Catches and prints any exceptions that occur during command execution.
+    Finally:
+        Ensures the client signs out when exiting the interactive mode.
+    """
     # Initialize client
     client = ClientNode()
 
@@ -17,6 +65,11 @@ def main():
     download_parser.add_argument('torrent_file', help='Path to the torrent file')
     download_parser.add_argument('--port', type=int, default=6881, help='Port to use for downloading')
     download_parser.add_argument('--download-dir', help='Directory to save the downloaded file')
+
+    # Command download magnet
+    download_magnet_parser = subparsers.add_parser('download_magnet')
+    download_magnet_parser.add_argument('magnet_link', help='Magnet link to download the torrent')
+    download_magnet_parser.add_argument('--download-dir', help='Directory to save the downloaded file')
 
     # Command seed
     seed_parser = subparsers.add_parser('seed')
@@ -57,6 +110,8 @@ def main():
         try:
             if args.command == 'download':
                 client.download_torrent(args.torrent_file, port=args.port, download_dir=args.download_dir)
+            elif args.command == 'download_magnet':
+                client.download_magnet(args.magnet_link, download_dir=args.download_dir)
             elif args.command == 'seed':
                 client.seed_torrent(args.torrent_file, args.complete_file, port=args.port)
             elif args.command == 'status':
@@ -99,6 +154,8 @@ def main():
 
             if args.command == 'download':
                 client.download_torrent(args.torrent_file, port=args.port, download_dir=args.download_dir)
+            elif args.command == 'download_magnet':
+                client.download_magnet(args.magnet_link, download_dir=args.download_dir)
             elif args.command == 'seed':
                 client.seed_torrent(args.torrent_file, args.complete_file, port=args.port)
             elif args.command == 'status':

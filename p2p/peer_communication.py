@@ -7,12 +7,13 @@ import bencodepy
 
 MAX_BLOCK_SIZE = 16384  # 16 KB
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
+import logging_config
 from p2p.bitfield import Bitfield
 from p2p.peer import Peer
 from p2p.message import Message, MessageID
 from p2p.handshake import Handshake
 class Communicator:
-    def __init__(self, peer: Peer, peer_id: bytes, info_hash: bytes, bitfield: Bitfield = None, conn=None, expected_pieces=0, metadata=None):
+    def __init__(self, peer: Peer, peer_id: bytes, info_hash: bytes, bitfield: Bitfield = None, conn=None, expected_pieces=0, metadata=[]):
         self.conn = conn
         self.peer = peer
         self.peer_id = peer_id
@@ -73,15 +74,10 @@ class Communicator:
     #     except (socket.timeout, socket.error) as e:
     #         logging.error(f"Error during handshake with peer {self.peer}: {e}")
     #         raise e
-
     def send_extended_handshake(self):
         """Gửi extended handshake để thông báo khả năng hỗ trợ metadata."""
-        extended_handshake = {
-            'm': {'ut_metadata': 1},  # Giả định là 1 để chỉ định rằng peer hỗ trợ metadata
-            'pieces_number': self.expected_pieces
-        }
-        handshake_message = Handshake(self.info_hash, self.peer_id, extended_handshake).serialize()
-        self.conn.sendall(handshake_message)
+        extended_handshake = Message.format_extended_handshake(self.expected_pieces)
+        self.conn.send(extended_handshake.serialize())
         logging.debug("Sent extended handshake to peer")
 
     def recv_extended_handshake(self):
@@ -90,9 +86,14 @@ class Communicator:
         if err:
             logging.error(f"Error reading extended handshake message: {err}")
             return
-        if msg.ID == MessageID.MsgExtended and msg.extended_id == 0:
-            if 'm' in msg.payload and 'expected_pieces' in msg.payload['m']:
-                self.expected_pieces = msg.payload['m']['expected_pieces']
+        if msg.ID == MessageID.MsgExtended:
+            logging.info(f"msg.Payload: {msg.Payload[1:0]}")
+            
+            handshake = bencodepy.decode(bytes(msg.Payload[1:]))
+            logging.debug(f"Received extended handshake: {handshake}")
+            logging.debug("Received extended handshake")
+            if handshake[b'pieces_number'] > 0:
+                self.expected_pieces = handshake[b'pieces_number']
                 logging.debug("Peer supports metadata exchange (ut_metadata)")
             else:
                 logging.debug("Peer does not support metadata exchange")
@@ -151,34 +152,60 @@ class Communicator:
         """Xử lý phản hồi metadata từ peer."""
         try:
             msg_type, payload = Message.parse_extended(message)
-
+            logging.debug(f"msg_type: {msg_type} with payload: {payload}")
             if msg_type == 0:  # Metadata request
-                piece_index = bencodepy.decode(payload)['piece']
-                if piece_index in self.metadata:
+                piece_index = bencodepy.decode(payload)[b'piece']
+                if piece_index < len(self.metadata):
                     self.send_metadata_piece(piece_index)
                 else:
                     self.reject_metadata_request(piece_index)
             elif msg_type == 1:  # Metadata data (response)
                 piece_index, data = Message.parse_metadata_response_type_1(message)
+                while len(self.metadata) <= piece_index:
+                    self.metadata.append(None)  # Hoặc giá trị mặc định nào đó
                 self.metadata[piece_index] = data
+                logging.debug(f"type of metadata: {type(data)}")
                 logging.debug(f"Received metadata piece {piece_index}")
-                if self.check_complete_metadata():
-                    logging.info("Received all metadata pieces")
             elif msg_type == 2:  # Metadata reject
                 piece_index = Message.parse_metadata_response_type_2(message)
                 logging.warning(f"Metadata request for piece {piece_index} was rejected")
         except Exception as e:
             logging.error(f"Failed to handle metadata message: {e}")
 
+    def send_have_metadata(self, pieces_number):
+        """Gửi thông điệp Have cho một phần metadata đã nhận."""
+        have_metadata = Message.format_have_metadata(pieces_number)
+        self.conn.sendall(have_metadata.serialize())
+        logging.debug(f"Sent have_metadata")
+
     def send_metadata_piece(self, piece_index):
         """Gửi phần metadata được yêu cầu cho peer."""
-        if piece_index in self.metadata:
+        if piece_index < len(self.metadata):
             data = self.metadata[piece_index]
             response_message = Message.format_metadata_data(piece_index, data)
             self.conn.sendall(response_message.serialize())
             logging.debug(f"Sent metadata piece {piece_index}")
         else:
             self.reject_metadata_request(piece_index)
+    def receive_metadata_piece(self):
+        """Nhận một phần metadata từ peer."""
+        try:
+            message, error = Message.read(self.conn)
+            if error:
+                logging.error(f"Error receiving metadata piece: {error}")
+            elif message and message.ID == MessageID.MsgExtended:
+                logging.debug("Received metadata message")
+                logging.debug(f"msg.Payload: {message.Payload}")
+                self.handle_metadata_message(message)
+            else:
+                logging.debug("Received non-metadata message or keep-alive")
+        except Exception as e:
+            logging.error(f"Unexpected error in receive_metadata_piece: {e}")
+    def request_metadata_piece(self, piece_index):
+        """Gửi yêu cầu metadata cho một phần cụ thể."""
+        metadata_request = Message.format_metadata_request(piece_index)
+        self.conn.sendall(metadata_request.serialize())
+        logging.debug(f"Requested metadata piece {piece_index}")
 
     def reject_metadata_request(self, piece_index):
         """Phản hồi từ chối yêu cầu metadata."""
@@ -206,9 +233,9 @@ class Communicator:
         except Exception as e:
             logging.error(f"Unexpected error in receive: {e}")
 
-    def send_handshake(self):
+    def send_handshake(self, bittorrent_extension=False):
         """Gửi handshake tới peer."""
-        handshake = Handshake(self.info_hash, self.peer_id)
+        handshake = Handshake(self.info_hash, self.peer_id, bittorrent_extension)
         self.conn.send(handshake.serialize())
         logging.debug("Sent handshake")
     def send_not_interested(self):

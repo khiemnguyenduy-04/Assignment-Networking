@@ -21,7 +21,7 @@ from p2p.upload_manager import UploadingManager
 from p2p.piece import Piece
 from p2p.peer_communication import Communicator
 # Configure logging
-logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
+import logging_config
 
 def _generate_peer_id(length=20):
     """Generate a random peer ID."""
@@ -46,7 +46,7 @@ class ClientNode:
         self.announced_trackers = set()  # Set to store announced trackers
         self.ping_thread = threading.Thread(target=self.start_ping_server)
         self.ping_thread.start()
-
+        self.info = None
     def _load_torrent_file(self, torrent_file):
         """Load and parse the .torrent file."""
         def decode_keys(data):
@@ -64,6 +64,7 @@ class ClientNode:
         torrent_data = decode_keys(torrent_data)
         self.tracker_url = torrent_data['announce']
         self.torrent_data = torrent_data
+        self.info = torrent_data['info']
         return torrent_data, torrent_data['info']
     def parse_magnet_link(self,magnet_link):
         """Phân tích magnet link và trả về info_hash và danh sách tracker URLs."""
@@ -81,26 +82,35 @@ class ClientNode:
         trackers = params.get('tr', [])
         self.tracker_url = trackers[0] if trackers else None
         return bytes.fromhex(info_hash), trackers
-    def announce(self, info_hash, port, event='started'):
+    def announce(self, info_hash, port, event='started', useMagnets=False):
         """Send announce request to tracker and update client state."""
-        info = self.torrent_data['info']
-        if 'length' in info:
-            file_length = info['length']
-        elif 'files' in info:
-            file_length = sum(file['length'] for file in info['files'])
+        if useMagnets:
+            params = {
+                'info_hash': info_hash,
+                'peer_id': self.peer_id,
+                'port': port,
+                'event': event,
+                'compact': 1
+            }
         else:
-            raise KeyError("Neither 'length' nor 'files' key found in torrent info dictionary.")
+            info = self.info
+            if 'length' in info:
+                file_length = info['length']
+            elif 'files' in info:
+                file_length = sum(file['length'] for file in info['files'])
+            else:
+                raise KeyError("Neither 'length' nor 'files' key found in torrent info dictionary.")
 
-        params = {
-            'info_hash': info_hash,
-            'peer_id': self.peer_id,
-            'port': port,
-            'uploaded': 0,
-            'downloaded': 0,
-            'left': file_length,  # Set the length of the file from the torrent data
-            'event': event,
-            'compact': 1
-        }
+            params = {
+                'info_hash': info_hash,
+                'peer_id': self.peer_id,
+                'port': port,
+                'uploaded': 0,
+                'downloaded': 0,
+                'left': file_length,  # Set the length of the file from the torrent data
+                'event': event,
+                'compact': 1
+            }
         if self.tracker_id:
             params['trackerid'] = self.tracker_id
 
@@ -131,7 +141,7 @@ class ClientNode:
         torrent_data, info = self._load_torrent_file(torrent_file)
         info_hash = hashlib.sha1(bencodepy.encode(info)).digest()
         logging.info(f"Starting download from {self.tracker_url} on port {port or self.download_port}...")
-
+        print(f"Starting download from {self.tracker_url} on port {port or self.download_port}...")
         peers = self.announce(info_hash, port or self.download_port)
         logging.info(f"Found peers: {peers}")
         peers = [Peer(peer['ip'], peer['port']) for peer in peers]
@@ -166,13 +176,15 @@ class ClientNode:
 
         peer_id_encoded = self.peer_id.encode("utf-8")
         # Start the download process
-        with tqdm(total=total_length, unit='B', unit_scale=True, desc=file_name) as pbar:
-            self.downloading_manager = DownloadingManager(progress_bar=pbar)  # Pass progress bar
-            if self.downloading_manager.start_download(peers, pieces, info_hash, peer_id_encoded, file_path, info['files'] if 'files' in info else None):
-                self.announce(info_hash, port or self.download_port, event='completed')
-                logging.info(f"Download completed. Files saved to {file_path}")
-            else:
-                logging.error("Download failed.")
+        
+        self.downloading_manager = DownloadingManager()  # Pass progress bar
+        if self.downloading_manager.start_download(peers, pieces, info_hash, peer_id_encoded, file_path, info['files'] if 'files' in info else None):
+            self.announce(info_hash, port or self.download_port, event='completed')
+            logging.info(f"Download completed. Files saved to {file_path}")
+            print(f"Download completed. Files saved to {file_path}")
+        else:
+            logging.error("Download failed.")
+            print("Download failed.")
 
     def seed_torrent(self, torrent_file, complete_file, port=None, upload_rate=None):
         """Handle the seeding process of a torrent."""
@@ -268,6 +280,7 @@ class ClientNode:
 
         # Notify tracker that we're stopping
         self.announce(info_hash, port=self.announce_port, event='stopped')
+        self.stop_event.set()  # Signal the server thread to stop
         logging.info("Torrent stopped.")
 
     def remove_torrent(self, torrent_file):
@@ -359,6 +372,7 @@ class ClientNode:
                 response.raise_for_status()
                 logging.info(f"Signed out from tracker: {tracker_url}")
             logging.info("Signed out successfully from all trackers.")
+            print("Signed out successfully from all trackers.")
         except requests.RequestException as e:
             logging.error(f"Error during sign out request: {e}")
         finally:
@@ -369,7 +383,7 @@ class ClientNode:
     def download_magnet(self, magnet_link, download_dir=None):
         """Download a torrent using a magnet link and return metadata."""
         info_hash, trackers = self.parse_magnet_link(magnet_link)
-        peers = self.announce(info_hash, port=self.download_port)
+        peers = self.announce(info_hash, port=self.download_port, useMagnets=True)
         if not peers:
             logging.error("No peers found.")
             return None
@@ -382,19 +396,24 @@ class ClientNode:
         for peer in peers:
             try:
                 communicator = Communicator(peer, self.peer_id.encode("utf-8"), info_hash)
-                communicator.send_handshake()
+                communicator.send_handshake(bittorrent_extension=True)
                 communicator.recv_handshake()
+                logging.info(f"normal handshake done")
                 communicator.send_extended_handshake()
                 communicator.recv_extended_handshake()
 
                 for piece_index in range(communicator.expected_pieces):
+                    logging.info(f"Requesting metadata piece {piece_index}")
                     communicator.request_metadata_piece(piece_index)
+                    logging.info(f"Receiving metadata piece {piece_index}")
                     communicator.receive_metadata_piece()
+                    if len(communicator.metadata) == communicator.expected_pieces:
+                        logging.info("Downloaded complete metadata")
+                        communicator.send_have_metadata(len(communicator.metadata))
                     
-                if len(communicator.metadata) == communicator.expected_pieces:
-                    logging.info("Successfully downloaded metadata")
-                    communicator.close_connection()  # Close the connection before breaking
-                    break
+
+                communicator.close_connection()  # Close the connection before breaking
+                break
             
             except Exception as e:
                 logging.error(f"Error communicating with peer {peer}: {e}")
@@ -402,8 +421,22 @@ class ClientNode:
         if len(communicator.metadata) != communicator.expected_pieces:
             logging.error("Failed to download complete metadata")
             return None
+        logging.info(f"len(communicator.metadata): {len(communicator.metadata)}")
+        logging.info(f"communicator.metadata: {communicator.metadata}")
         reconstructed_metadata = b''.join(communicator.metadata)
-        info = bencodepy.decode(reconstructed_metadata)
+        
+
+        def decode_keys(data):
+            """Recursively decode keys in a dictionary."""
+            if isinstance(data, dict):
+                return {k.decode('utf-8'): decode_keys(v) for k, v in data.items()}
+            elif isinstance(data, list):
+                return [decode_keys(item) for item in data]
+            else:
+                return data
+        info = decode_keys(bencodepy.decode(reconstructed_metadata))
+        self.info = info
+        logging.info(f"Metadata: {self.info}")
         if (info_hash != hashlib.sha1(bencodepy.encode(info)).digest()):
             logging.error("Metadata hash mismatch")
             return None
@@ -441,13 +474,14 @@ class ClientNode:
 
         peer_id_encoded = self.peer_id.encode("utf-8")
         # Start the download process
-        with tqdm(total=total_length, unit='B', unit_scale=True, desc=file_name) as pbar:
-            self.downloading_manager = DownloadingManager(progress_bar=pbar)  # Pass progress bar
-            if self.downloading_manager.start_download(peers, pieces, info_hash, peer_id_encoded, file_path, info['files'] if 'files' in info else None):
-                self.announce(info_hash, self.download_port, event='completed')
-                logging.info(f"Download completed. Files saved to {file_path}")
-            else:
-                logging.error("Download failed.")
+        self.downloading_manager = DownloadingManager()  # Pass progress bar
+        if self.downloading_manager.start_download(peers, pieces, info_hash, peer_id_encoded, file_path, info['files'] if 'files' in info else None):
+            self.announce(info_hash, self.download_port, event='completed')
+            logging.info(f"Download completed. Files saved to {file_path}")
+            print(f"Download completed. Files saved to {file_path}")
+        else:
+            logging.error("Download failed.")
+            print("Download failed.")
 
 
     def start_ping_server(self):
