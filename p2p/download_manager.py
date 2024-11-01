@@ -37,9 +37,12 @@ class DownloadingManager:
     # Worker to download pieces from peers
     def download_worker(self, peer, work_queue, results_queue, info_hash, peer_id, total_pieces):
         client = Communicator(peer, peer_id, info_hash)
+        client.send_handshake()
+        client.recv_handshake()
         self.peer_clients.append(client)
         logging.info(f"Starting download from peer {peer}")
-
+        client.send_bitfield()
+        client.recv_bitfield()
         # gửi ngay sau khi kết nối
         client.send_interested()
         # client.send_unchoke()
@@ -234,3 +237,4 @@ class DownloadingManager:
         if not download_successful:
             logging.info("Download was incomplete. Please check network and retry.")
         return download_successful
+    

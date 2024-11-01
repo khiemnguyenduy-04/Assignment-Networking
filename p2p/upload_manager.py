@@ -4,6 +4,7 @@ import struct
 import sys
 import os
 import hashlib
+import bencodepy
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
 from p2p.message import Message, MessageID
 from p2p.peer_communication import Communicator
@@ -14,7 +15,7 @@ from p2p.bitfield import Bitfield
 MAX_UPLOAD_QUEUE = 5
 
 class UploadingManager:
-    def __init__(self, pieces, peer_id, info_hash, file_paths, total_lengths):
+    def __init__(self, pieces, peer_id, info_hash, file_paths, total_lengths, metadata=None):
         """
         Khởi tạo UploadingManager với các mảnh mà client sở hữu.
         :param pieces: Danh sách các mảnh mà client có.
@@ -22,6 +23,7 @@ class UploadingManager:
         :param info_hash: Info hash của torrent.
         :param file_paths: Danh sách đường dẫn tới các file chứa dữ liệu.
         :param total_lengths: Danh sách chiều dài của từng file.
+        :param metadata: Metadata để seeding (nếu có).
         """
         self.pieces = {piece.index: piece for piece in pieces}  # Lưu trữ mảnh theo index để truy xuất nhanh
         self.peer_id = peer_id
@@ -32,6 +34,7 @@ class UploadingManager:
         self.peers = {}
         self.lock = threading.Lock()
         self.piece_to_file_map = self.build_piece_to_file_map()
+        self.metadata = metadata  # Metadata để seeding (nếu có)
 
     def build_piece_to_file_map(self):
         """
@@ -135,11 +138,17 @@ class UploadingManager:
         for i in self.pieces.keys():
             bitfield.set_piece(i)
         communicator = Communicator(peer, self.peer_id, self.info_hash, bitfield.bitfield, client_socket)
-        communicator.send_unchoke()  # Unchoke để peer có thể gửi yêu cầu
-        #communicator.send_interested()  # Cho biết mình có dữ liệu
-        logging.info("check bitfield") 
+        communicator.send_handshake()  # Gửi handshake tới peer
+        communicator.recv_handshake()  # Nhận và xử lý handshake từ peer
+        bitfield = communicator.recv_bitfield()  # Nhận bitfield từ peer
+        if bitfield:
+            communicator.send_bitfield()  # Gửi bitfield của client tới peer
+            logging.info(f"Received bitfield from {communicator.peer}")
+            threading.Thread(target=self.handle_peer_requests, args=(communicator,)).start()
+        else:
+            communicator.recv_extended_handshake()  # Nhận extended handshake từ peer
+            threading.Thread(target=self.handle_peer_request_metadata, args=(communicator,)).start()
         self.peers[peer] = communicator
-        threading.Thread(target=self.handle_peer_requests, args=(communicator,)).start()
 
     def handle_peer_requests(self, communicator):
         """
@@ -163,7 +172,8 @@ class UploadingManager:
                             logging.debug(f"Uploaded piece {index} to {communicator.peer}")
                         else:
                             logging.warning(f"Requested piece {index} not available for upload")
-
+                elif message.ID == MessageID.MsgInterested:
+                    communicator.send_unchoke()  # Gửi thông điệp Unchoke
                 elif message.ID == MessageID.MsgChoke:
                     logging.info(f"Peer {communicator.peer} has choked us")
                     break  # Dừng khi bị choked
@@ -183,11 +193,13 @@ class UploadingManager:
                 logging.error(f"Error handling peer request: {e}")
                 break
 
-    def send_have(self, piece_index):
+    def handle_peer_request_metadata(self, communicator):
         """
-        Gửi thông điệp Have tới tất cả các peers để thông báo rằng client đã có mảnh mới.
-        :param piece_index: Index của mảnh mới mà client đã tải xuống.
+        Xử lý yêu cầu metadata từ một peer cụ thể.
         """
-        for communicator in self.peers.values():
-            communicator.send_have(piece_index)
-            logging.info(f"Sent 'Have' for piece {piece_index} to peer {communicator.peer}")
+        while True:
+            try:
+                communicator.handle_metadata_message()  # Xử lý metadata từ peer
+            except Exception as e:
+                logging.error(f"Error handling peer request: {e}")
+                break

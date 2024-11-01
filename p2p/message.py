@@ -1,7 +1,7 @@
 import struct
 import socket
 import logging
-
+import bencodepy
 # Cấu hình logging
 logging.basicConfig(level=logging.DEBUG, format='%(asctime)s - %(levelname)s - %(message)s')
 
@@ -36,11 +36,29 @@ class Message:
     def format_piece(cls, index, begin, block):
         payload = struct.pack('>II', index, begin) + block
         return cls(message_id=MessageID.MsgPiece, payload=payload)
+    
     @classmethod
     def format_extended(cls, ext_id, payload):
         payload = struct.pack('>B', ext_id) + payload
         return cls(message_id=MessageID.MsgExtended, payload=payload)
     
+    @classmethod
+    def format_metadata_request(cls, piece_index):
+        # `msg_type` 0 is used for metadata requests
+        payload = struct.pack('>B', 0) + bencodepy({'msg_type': 0, 'piece': piece_index})
+        return cls.format_extended(ext_id=20, payload=payload)
+
+    @classmethod
+    def format_metadata_data(cls, piece_index, data):
+        # `msg_type` 1 is used for metadata data (response)
+        payload = struct.pack('>B', 1) + bencodepy({'msg_type': 1, 'piece': piece_index, 'total_size': len(data)}) + data
+        return cls.format_extended(ext_id=20, payload=payload)
+
+    @classmethod
+    def format_metadata_reject(cls, piece_index):
+        # `msg_type` 2 is used to reject a metadata request
+        payload = struct.pack('>B', 2) + bencodepy({'msg_type': 2, 'piece': piece_index})
+        return cls.format_extended(ext_id=20, payload=payload)
     @staticmethod
     def parse_piece(index, buf, msg):
         if msg.ID != MessageID.MsgPiece:
@@ -62,16 +80,63 @@ class Message:
 
         buf[begin:begin + len(data)] = data
         return len(data)
+    
+    @staticmethod
+    def parse_metadata_response_0(msg):
+        ext_id, payload = Message.parse_extended(msg)
+        if ext_id != 20:
+            raise ValueError("Unexpected extension message for metadata")
+
+        metadata = bencodepy.decode(payload[1:])  # Assuming `payload` contains bencoded data after the `msg_type`
+        msg_type = metadata.get('msg_type')
+
+        if msg_type == 0:
+            # Handle request for a metadata piece
+            piece_index = metadata.get('piece')
+            # Respond with the requested piece or send reject
+            return piece_index       
+        else:
+            raise ValueError("Unknown metadata message type")
+    @staticmethod
+    def parse_metadata_response_type_1(msg):
+        msg_type, payload = Message.parse_extended(msg)
+
+        metadata = bencodepy.decode(payload)  # Assuming `payload` contains bencoded data after the `msg_type`
+
+        if msg_type == 1:
+            # Handle received metadata piece
+            piece_index = metadata.get('piece')
+            total_size = metadata.get('total_size')
+            data_start = len(payload) - len(bencodepy.encode(metadata))
+            data = payload[data_start:data_start + total_size]  # Assuming data follows the first 8 bytes in the payload
+            # Process received metadata piece
+            return piece_index, data
+        else:
+            raise ValueError("Unknown metadata message type")
+        
+    @staticmethod
+    def parse_metadata_response_type_2(msg):
+        msg_type, payload = Message.parse_extended(msg)
+        metadata = bencodepy.decode(payload)  # Assuming `payload` contains bencoded data after the `msg_type`
+        msg_type = metadata.get('msg_type')
+        if msg_type == 2:
+            # Handle rejection of a metadata request
+            piece_index = metadata.get('piece')
+            return piece_index
+            # Handle rejection
+        else:
+            raise ValueError("Unknown metadata message type")
     @staticmethod
     def parse_extended(msg):
         if msg.ID != MessageID.MsgExtended:
             raise ValueError(f"Expected EXTENDED (ID {MessageID.MsgExtended}), got ID {msg.ID}")
-        if len(msg.Payload) < 1:
-            raise ValueError(f"Payload too short. {len(msg.Payload)} < 1")
+        if len(msg.Payload) < 2:
+            raise ValueError(f"Payload too short. {len(msg.Payload)} < 2")
 
-        ext_id = struct.unpack('>B', msg.Payload[0:1])[0]
+        msg_type = msg.Payload[0]
         payload = msg.Payload[1:]
-        return ext_id, payload
+        return msg_type, payload
+    
     @staticmethod
     def parse_have(msg):
         if msg.ID != MessageID.MsgHave:

@@ -13,12 +13,13 @@ sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
 
 import hashlib
 import logging
+import urllib
 from tabulate import tabulate
 from p2p.download_manager import DownloadingManager
 from p2p.peer import Peer
 from p2p.upload_manager import UploadingManager
 from p2p.piece import Piece
-
+from p2p.peer_communication import Communicator
 # Configure logging
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 
@@ -64,7 +65,22 @@ class ClientNode:
         self.tracker_url = torrent_data['announce']
         self.torrent_data = torrent_data
         return torrent_data, torrent_data['info']
-
+    def parse_magnet_link(self,magnet_link):
+        """Phân tích magnet link và trả về info_hash và danh sách tracker URLs."""
+        parsed_url = urllib.parse.urlparse(magnet_link)
+        if parsed_url.scheme != 'magnet':
+            raise ValueError("Invalid magnet link")
+        
+        params = urllib.parse.parse_qs(parsed_url.query)
+        info_hash = params.get('xt', [None])[0]
+        if info_hash and info_hash.startswith('urn:btih:'):
+            info_hash = info_hash[9:]
+        else:
+            raise ValueError("Invalid magnet link: missing or invalid info_hash")
+        
+        trackers = params.get('tr', [])
+        self.tracker_url = trackers[0] if trackers else None
+        return bytes.fromhex(info_hash), trackers
     def announce(self, info_hash, port, event='started'):
         """Send announce request to tracker and update client state."""
         info = self.torrent_data['info']
@@ -161,6 +177,11 @@ class ClientNode:
     def seed_torrent(self, torrent_file, complete_file, port=None, upload_rate=None):
         """Handle the seeding process of a torrent."""
         torrent_data, info = self._load_torrent_file(torrent_file)
+
+        piece_size=16384
+        metadata_bytes = bencodepy.encode(info)
+        metadata_pieces = [metadata_bytes[i:i + piece_size] for i in range(0, len(metadata_bytes), piece_size)]
+
         info_hash = hashlib.sha1(bencodepy.encode(info)).digest()
         logging.info(f"Starting seeding to {self.tracker_url} on port {port or self.upload_port} with upload rate {upload_rate}...")
         peers = self.announce(info_hash, port or self.upload_port, event='completed')
@@ -188,7 +209,8 @@ class ClientNode:
             file_paths = [complete_file]
             total_lengths = [total_length]
         
-        self.uploading_manager = UploadingManager(pieces, self.peer_id.encode("utf-8"), info_hash, file_paths, total_lengths)
+
+        self.uploading_manager = UploadingManager(pieces, self.peer_id.encode("utf-8"), info_hash, file_paths, total_lengths, metadata=metadata_pieces)
         
         # Start a server to accept incoming connections from peers
         server_thread = threading.Thread(target=self._start_seeding_server, args=(port or self.upload_port,))
@@ -320,7 +342,10 @@ class ClientNode:
     def sign_out(self):
         """Notify tracker that the client is offline if an event was announced."""
         if not self.has_announced:
+            self.stop_event.set()  # Signal the server thread to stop
+            self.ping_thread.join()  # Wait for the ping server thread to stop
             logging.info("No event announced, skipping sign out.")
+
             return
 
         params = {
@@ -339,23 +364,115 @@ class ClientNode:
         finally:
             self.stop_event.set()  # Signal the server thread to stop
             self.ping_thread.join()  # Wait for the ping server thread to stop
-    def start_ping_server(self):
-            """Start a server to listen for ping requests from trackers."""
-            server_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-            server_socket.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
-            server_socket.bind(('0.0.0.0', self.ping_port))
-            server_socket.listen(5)
-            logging.info(f"Ping server started on port {self.ping_port}")
 
-            while not self.stop_event.is_set():
-                try:
-                    server_socket.settimeout(1)
-                    client_socket, client_address = server_socket.accept()
-                    logging.info(f"Received ping from {client_address}")
-                    client_socket.sendall(b'pong')
-                    client_socket.close()
-                except socket.timeout:
-                    continue
-                except Exception as e:
-                    logging.error(f"Error handling ping request: {e}")
+
+    def download_magnet(self, magnet_link, download_dir=None):
+        """Download a torrent using a magnet link and return metadata."""
+        info_hash, trackers = self.parse_magnet_link(magnet_link)
+        peers = self.announce(info_hash, port=self.download_port)
+        if not peers:
+            logging.error("No peers found.")
+            return None
+        else:
+            logging.info(f"Found peers: {peers}")
+        peers = [Peer(peer['ip'], peer['port']) for peer in peers]
+
+        # Kết nối tới các peer và yêu cầu metadata
+        metadata = {}
+        for peer in peers:
+            try:
+                communicator = Communicator(peer, self.peer_id.encode("utf-8"), info_hash)
+                communicator.send_handshake()
+                communicator.recv_handshake()
+                communicator.send_extended_handshake()
+                communicator.recv_extended_handshake()
+
+                for piece_index in range(communicator.expected_pieces):
+                    communicator.request_metadata_piece(piece_index)
+                    communicator.receive_metadata_piece()
+                    
+                if len(communicator.metadata) == communicator.expected_pieces:
+                    logging.info("Successfully downloaded metadata")
+                    communicator.close_connection()  # Close the connection before breaking
                     break
+            
+            except Exception as e:
+                logging.error(f"Error communicating with peer {peer}: {e}")
+
+        if len(communicator.metadata) != communicator.expected_pieces:
+            logging.error("Failed to download complete metadata")
+            return None
+        reconstructed_metadata = b''.join(communicator.metadata)
+        info = bencodepy.decode(reconstructed_metadata)
+        if (info_hash != hashlib.sha1(bencodepy.encode(info)).digest()):
+            logging.error("Metadata hash mismatch")
+            return None
+        peers = self.announce(info_hash, self.download_port)
+        logging.info(f"Found peers: {peers}")
+        peers = [Peer(peer['ip'], peer['port']) for peer in peers]
+
+        # Create the download directory if it doesn't exist
+        if download_dir and not os.path.exists(download_dir):
+            os.makedirs(download_dir)
+
+        # Get the piece length and the total length of the file
+        piece_length = info['piece length']
+        total_length = sum(file['length'] for file in info['files']) if 'files' in info else info['length']
+        pieces = []
+
+        # Create Piece objects for each piece in the torrent
+        for i in range(0, total_length, piece_length):
+            length = min(piece_length, total_length - i)
+            piece_hash = info['pieces'][i // piece_length * 20:(i // piece_length + 1) * 20]
+            pieces.append(Piece(i // piece_length, length, piece_hash))
+
+        # Ensure info['name'] is a string
+        file_name = info['name']
+        if isinstance(file_name, bytes):
+            file_name = file_name.decode('utf-8')
+
+        # Determine the file path to save the downloaded file
+        if 'files' in info:
+            # Multi-file mode
+            file_path = download_dir if download_dir else os.getcwd()
+        else:
+            # Single-file mode
+            file_path = os.path.join(download_dir if download_dir else os.getcwd(), file_name)
+
+        peer_id_encoded = self.peer_id.encode("utf-8")
+        # Start the download process
+        with tqdm(total=total_length, unit='B', unit_scale=True, desc=file_name) as pbar:
+            self.downloading_manager = DownloadingManager(progress_bar=pbar)  # Pass progress bar
+            if self.downloading_manager.start_download(peers, pieces, info_hash, peer_id_encoded, file_path, info['files'] if 'files' in info else None):
+                self.announce(info_hash, self.download_port, event='completed')
+                logging.info(f"Download completed. Files saved to {file_path}")
+            else:
+                logging.error("Download failed.")
+
+
+    def start_ping_server(self):
+        """Start a server to listen for ping requests from trackers."""
+        server_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        server_socket.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+        server_socket.bind(('0.0.0.0', self.ping_port))
+        server_socket.listen(5)
+        logging.info(f"Ping server started on port {self.ping_port}")
+
+        while not self.stop_event.is_set():
+            try:
+                server_socket.settimeout(1)
+                client_socket, client_address = server_socket.accept()
+                with client_socket:
+                    logging.info(f"Received ping from {client_address}")
+                    data = client_socket.recv(1024)
+                    if data == b'ping':
+                        client_socket.sendall(b'pong')
+                        logging.info("Sent pong response")
+                    else:
+                        logging.warning(f"Unexpected data received from {client_address}: {data}")
+
+            except socket.timeout:
+                continue
+            except Exception as e:
+                logging.error(f"Error handling ping request: {e}")
+                break

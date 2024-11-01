@@ -1,5 +1,9 @@
 import argparse
-from client_node import ClientNode
+import os
+import sys
+sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
+from client.client_node import ClientNode
+from metainfo.metainfo import Metainfo
 
 def main():
     # Initialize client
@@ -19,11 +23,9 @@ def main():
     seed_parser.add_argument('torrent_file', help='Path to the torrent file')
     seed_parser.add_argument('complete_file', help='Path to the complete file to seed')
     seed_parser.add_argument('--port', type=int, default=6882, help='Port to use for seeding')
-    seed_parser.add_argument('--upload-rate', type=int, help='Upload rate limit in KB/s')
 
     # Command status
     status_parser = subparsers.add_parser('status')
-    
 
     # Command peers
     peers_parser = subparsers.add_parser('peers')
@@ -39,6 +41,14 @@ def main():
     remove_parser = subparsers.add_parser('remove')
     remove_parser.add_argument('torrent_file', help='Path to the torrent file')
 
+    # Command create
+    create_parser = subparsers.add_parser('create')
+    create_parser.add_argument('input_path', help='Path to the file or directory to include in the torrent')
+    create_parser.add_argument('--tracker', required=True, help='Tracker address')
+    create_parser.add_argument('--output', default='output.torrent', help='Output torrent file name')
+    create_parser.add_argument('--piece-length', type=int, default=524288, help='Piece length in bytes (default: 512 KB)')
+    create_parser.add_argument('--magnet', action='store_true', help='Generate magnet link')
+
     # Parse initial arguments
     args = parser.parse_args()
 
@@ -48,7 +58,7 @@ def main():
             if args.command == 'download':
                 client.download_torrent(args.torrent_file, port=args.port, download_dir=args.download_dir)
             elif args.command == 'seed':
-                client.seed_torrent(args.torrent_file, args.complete_file, port=args.port, upload_rate=args.upload_rate)
+                client.seed_torrent(args.torrent_file, args.complete_file, port=args.port)
             elif args.command == 'status':
                 client.show_status()
             elif args.command == 'peers':
@@ -62,6 +72,12 @@ def main():
                 client.stop_torrent(args.torrent_file)
             elif args.command == 'remove':
                 client.remove_torrent(args.torrent_file)
+            elif args.command == 'create':
+                Metainfo.create_torrent_file(args.input_path, args.tracker, args.output, args.piece_length)
+                if args.magnet:
+                    storage = Metainfo(args.output)
+                    magnet_link = storage.create_magnet_link()
+                    print(f"Magnet link: {magnet_link}")
             else:
                 print("Unknown command")
         except Exception as e:
@@ -84,7 +100,7 @@ def main():
             if args.command == 'download':
                 client.download_torrent(args.torrent_file, port=args.port, download_dir=args.download_dir)
             elif args.command == 'seed':
-                client.seed_torrent(args.torrent_file, args.complete_file, port=args.port, upload_rate=args.upload_rate)
+                client.seed_torrent(args.torrent_file, args.complete_file, port=args.port)
             elif args.command == 'status':
                 client.show_status()
             elif args.command == 'peers':
@@ -98,6 +114,12 @@ def main():
                 client.stop_torrent(args.torrent_file)
             elif args.command == 'remove':
                 client.remove_torrent(args.torrent_file)
+            elif args.command == 'create':
+                Metainfo.create_torrent_file(args.input_path, args.tracker, args.output, args.piece_length)
+                if args.magnet:
+                    storage = Metainfo(args.output)
+                    magnet_link = storage.create_magnet_link()
+                    print(f"Magnet link: {magnet_link}")
             else:
                 print("Unknown command")
     finally:
