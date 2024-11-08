@@ -265,12 +265,12 @@ class ClientNode:
         """Show the list of peers for a torrent."""
         torrent_data, info = self._load_torrent_file(torrent_file)
         info_hash = hashlib.sha1(bencodepy.encode(info)).digest()
-        logging.info(f"Fetching peers from {self.tracker_url}...")
+        print(f"Fetching peers from {self.tracker_url}...")
 
         peers = self.announce(info_hash, port=self.announce_port)  # Use announce port
         table = [[peer['ip'], peer['port']] for peer in peers]
-        logging.info(f"Peers for {torrent_file}:\n")
-        logging.info("\n" + tabulate(table, headers=["IP Address", "Port"], tablefmt="grid"))
+        print(f"Peers for {torrent_file}:\n")
+        print("\n" + tabulate(table, headers=["IP Address", "Port"], tablefmt="grid"))
 
     def stop_torrent(self, torrent_file):
         """Stop the torrent download or seeding."""
@@ -301,8 +301,8 @@ class ClientNode:
     def scrape(self, info_hash):
         """Gửi yêu cầu scrape tới tracker để lấy thông tin về số lượng peers của torrent với info_hash."""
         # Tạo URL scrape
-        if 'announce' in self.tracker_url:
-            scrape_url = self.tracker_url.replace('announce', 'scrape')
+        if b'announce' in self.tracker_url:
+            scrape_url = self.tracker_url.replace(b'announce', b'scrape')
         else:
             raise ValueError("Tracker does not support scrape convention.")
 
@@ -338,7 +338,7 @@ class ClientNode:
 
     def scrape_peers(self, torrent_file):
         """Scrape the tracker for peer information."""
-        torrent_data, info = self._load_torrent_file(torrent_file)
+        _, info = self._load_torrent_file(torrent_file)
         info_hash = hashlib.sha1(bencodepy.encode(info)).digest()
         logging.info(f"Scraping tracker for peer information...")
         stats = self.scrape(info_hash)
@@ -349,8 +349,8 @@ class ClientNode:
                 ["Leechers (incomplete)", stats['incomplete']],
                 ["Total downloaded", stats['downloaded']]
             ]
-            logging.info(f"Scrape info for {torrent_file}:\n")
-            logging.info("\n" + tabulate(table, headers=["Description", "Count"], tablefmt="grid", maxcolwidths=[None, 20]))
+            print(f"Scrape info for {torrent_file}:\n")
+            print("\n" + tabulate(table, headers=["Description", "Count"], tablefmt="grid"))
 
     def sign_out(self):
         """Notify tracker that the client is offline if an event was announced."""

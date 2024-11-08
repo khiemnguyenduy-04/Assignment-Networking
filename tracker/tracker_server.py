@@ -217,8 +217,9 @@ def ping_all_clients(client_list):
 def run(server_class=ThreadingHTTPServer, handler_class=TrackerServer, port=DEFAULT_PORT, stop_event=None):
     server_address = ('', port)
     httpd = server_class(server_address, handler_class)
-    logger.info(f"Starting tracker server on port {port} with multi-threading support")
-
+    ip_address = socket.gethostbyname(socket.gethostname())
+    logger.info(f"Starting tracker server on {ip_address}:{port} with multi-threading support")
+    print(f"Starting tracker server on {ip_address}:{port} with multi-threading support")
     def check_stop_event():
         while not stop_event.is_set():
             pass
